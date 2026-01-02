@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import voluptuous as vol
 
-from homeassistant.components.climate import HVACMode
+from homeassistant.components.climate.const import HVACMode
 from homeassistant.const import (
     CONF_NAME,
     PRECISION_HALVES,
@@ -23,11 +23,9 @@ from homeassistant.helpers.schema_config_entry_flow import (
 from .const import (
     CONF_BOOST_MODE,
     CONF_BOOST_TEMP_DIFF,
-    CONF_COLD_TOLERANCE,
     CONF_CYCLE_PERIOD,
     CONF_FLOOR_SENSOR,
     CONF_HEATER,
-    CONF_HOT_TOLERANCE,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
     CONF_MAX_FLOOR_TEMP,
@@ -130,28 +128,6 @@ OPTIONS_SCHEMA = vol.Schema(
                 min=5.0,
                 max=35.0,
                 step=0.5,
-                unit_of_measurement="°C",
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_COLD_TOLERANCE, default=DEFAULT_TOLERANCE
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.1,
-                max=5.0,
-                step=0.1,
-                unit_of_measurement="°C",
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
-        vol.Optional(
-            CONF_HOT_TOLERANCE, default=DEFAULT_TOLERANCE
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=0.1,
-                max=5.0,
-                step=0.1,
                 unit_of_measurement="°C",
                 mode=selector.NumberSelectorMode.BOX,
             )

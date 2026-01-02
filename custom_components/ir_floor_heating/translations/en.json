@@ -69,11 +69,9 @@
                 "data": {
                     "boost_mode": "Enable boost mode",
                     "boost_temp_diff": "Boost mode activation threshold",
-                    "cold_tolerance": "Cold tolerance",
                     "cycle_period": "TPI cycle period",
                     "floor_sensor": "Floor temperature sensor",
                     "heater": "Heater switch",
-                    "hot_tolerance": "Hot tolerance",
                     "initial_hvac_mode": "Initial HVAC mode",
                     "keep_alive": "Keep-alive interval",
                     "max_floor_temp": "Absolute maximum floor temperature",

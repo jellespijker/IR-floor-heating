@@ -34,8 +34,6 @@
           "min_temp": "Minimum setpoint temperature",
           "max_temp": "Maximum setpoint temperature",
           "target_temp": "Initial target temperature",
-          "cold_tolerance": "Cold tolerance",
-          "hot_tolerance": "Hot tolerance",
           "min_cycle_duration": "Minimum cycle duration (relay protection)",
           "cycle_period": "TPI cycle period",
           "keep_alive": "Keep-alive interval",

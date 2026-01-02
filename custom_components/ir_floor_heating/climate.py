@@ -8,8 +8,9 @@ import logging
 import math
 from typing import Any
 
-from homeassistant.components.climate import (
-    ClimateEntity,
+from homeassistant.components.climate import ClimateEntity
+
+from homeassistant.components.climate.const import (
     ClimateEntityFeature,
     HVACAction,
     HVACMode,
@@ -47,11 +48,9 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .const import (
     CONF_BOOST_MODE,
     CONF_BOOST_TEMP_DIFF,
-    CONF_COLD_TOLERANCE,
     CONF_CYCLE_PERIOD,
     CONF_FLOOR_SENSOR,
     CONF_HEATER,
-    CONF_HOT_TOLERANCE,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
     CONF_MAX_FLOOR_TEMP,
@@ -112,12 +111,6 @@ async def async_setup_entry(
     cycle_period: int = config_entry.options.get(
         CONF_CYCLE_PERIOD, DEFAULT_CYCLE_PERIOD
     )
-    cold_tolerance: float = config_entry.options.get(
-        CONF_COLD_TOLERANCE, DEFAULT_TOLERANCE
-    )
-    hot_tolerance: float = config_entry.options.get(
-        CONF_HOT_TOLERANCE, DEFAULT_TOLERANCE
-    )
     keep_alive: int | None = config_entry.options.get(CONF_KEEP_ALIVE)
     initial_hvac_mode: HVACMode | None = config_entry.options.get(
         CONF_INITIAL_HVAC_MODE
@@ -150,8 +143,6 @@ async def async_setup_entry(
         max_floor_temp_diff=max_floor_temp_diff,
         min_cycle_duration=timedelta(seconds=min_cycle_duration),
         cycle_period=timedelta(seconds=cycle_period),
-        cold_tolerance=cold_tolerance,
-        hot_tolerance=hot_tolerance,
         keep_alive=timedelta(seconds=keep_alive) if keep_alive else None,
         initial_hvac_mode=initial_hvac_mode,
         precision=precision,
@@ -194,8 +185,6 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         max_floor_temp_diff: float,
         min_cycle_duration: timedelta,
         cycle_period: timedelta,
-        cold_tolerance: float,
-        hot_tolerance: float,
         keep_alive: timedelta | None,
         initial_hvac_mode: HVACMode | None,
         precision: float | None,
@@ -225,8 +214,6 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         # Control parameters
         self.min_cycle_duration = min_cycle_duration
         self.cycle_period = cycle_period
-        self._cold_tolerance = cold_tolerance
-        self._hot_tolerance = hot_tolerance
         self._keep_alive = keep_alive
         self._boost_mode = boost_mode
         self._boost_temp_diff = boost_temp_diff
@@ -499,8 +486,10 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             return
 
         self._async_update_room_temp(new_state)
-        await self._async_control_heating()
-        self.async_write_ha_state()
+        try:
+            await self._async_control_heating()
+        finally:
+            self.async_write_ha_state()
 
     async def _async_floor_sensor_changed(
         self, event: Event[EventStateChangedData]
@@ -511,8 +500,10 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             return
 
         self._async_update_floor_temp(new_state)
-        await self._async_control_heating()
-        self.async_write_ha_state()
+        try:
+            await self._async_control_heating()
+        finally:
+            self.async_write_ha_state()
 
     async def _check_switch_initial_state(self) -> None:
         """Prevent the device from keep running if HVACMode.OFF."""

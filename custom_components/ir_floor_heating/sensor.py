@@ -87,6 +87,9 @@ class IRFloorHeatingBaseSensor(SensorEntity):
             )
         )
 
+        # Trigger initial update
+        self.async_write_ha_state()
+
 
 class IRFloorHeatingDemandSensor(IRFloorHeatingBaseSensor):
     """Sensor for heating demand percentage."""
