@@ -1,0 +1,11 @@
+{
+  "domain": "ir_floor_heating",
+  "name": "IR Floor Heating",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/jellespijker/IR-floor-heating",
+  "integration_type": "device",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "1.0.0"
+}

@@ -1,46 +1,200 @@
-# Notice
+# IR Floor Heating Integration
 
-The component and platforms in this repository are not meant to be used by a
-user, but as a "blueprint" that custom component developers can build
-upon, to make more awesome stuff.
+An advanced Home Assistant integration for controlling electric infrared (IR) floor heating systems using a dual-sensor topology with Time Proportional & Integral (TPI) control algorithm.
 
-HAVE FUN! 😎
+## Overview
 
-## Why?
+This integration provides sophisticated control of electric floor heating systems by monitoring both room air temperature and floor surface temperature. It implements a "Safety-Comfort-Demand" hierarchy to protect flooring materials while maintaining occupant comfort.
 
-This is simple, by having custom_components look (README + structure) the same
-it is easier for developers to help each other and for users to start using them.
+The specific system under analysis involves a high-load resistive heating element managed by a dual-sensor topology. The governing logic satisfies a primary setpoint for ambient air temperature while strictly adhering to two hierarchical constraints: an absolute maximum floor temperature to prevent material degradation, and a differential maximum floor temperature relative to the room air to ensure physiological comfort.
 
-If you are a developer and you want to add things to this "blueprint" that you think more
-developers will have use for, please open a PR to add it :)
+## Theoretical Background
 
-## What?
+### The Operational Context
+Electric underfloor heating systems, particularly those utilizing carbon film technology, operate on the principle of Joule heating. The control problem arises from the decoupling of the heat source (the floor) and the controlled variable (the room air temperature). In modern construction involving temperature-sensitive materials like engineered wood, laminate, or vinyl, unbounded operation poses a severe risk of warping, delamination, or discoloration. Furthermore, physiological studies indicate that floor surface temperatures exceeding 29°C (84°F) can cause discomfort.
 
-This repository contains multiple files, here is a overview:
+### Thermodynamics of the Heating Plant
+The plant consists of the electric IR film, the floor assembly, and the enclosed air volume.
+- **Rapid Generation**: Carbon strips reach operating temperature within seconds.
+- **Conductive Latency**: The heat must traverse the flooring stack, introducing a transport delay (dead time) of 10 to 30 minutes.
+- **Thermal Storage**: The floor assembly acts as a thermal capacitor, smoothing rapid switching but introducing inertia.
 
-File | Purpose | Documentation
--- | -- | --
-`.devcontainer.json` | Used for development/testing with Visual Studio Code. | [Documentation](https://code.visualstudio.com/docs/remote/containers)
-`.github/ISSUE_TEMPLATE/*.yml` | Templates for the issue tracker | [Documentation](https://help.github.com/en/github/building-a-strong-community/configuring-issue-templates-for-your-repository)
-`custom_components/integration_blueprint/*` | Integration files, this is where everything happens. | [Documentation](https://developers.home-assistant.io/docs/creating_component_index)
-`CONTRIBUTING.md` | Guidelines on how to contribute. | [Documentation](https://help.github.com/en/github/building-a-strong-community/setting-guidelines-for-repository-contributors)
-`LICENSE` | The license file for the project. | [Documentation](https://help.github.com/en/github/creating-cloning-and-archiving-repositories/licensing-a-repository)
-`README.md` | The file you are reading now, should contain info about the integration, installation and configuration instructions. | [Documentation](https://help.github.com/en/github/writing-on-github/basic-writing-and-formatting-syntax)
-`requirements.txt` | Python packages used for development/lint/testing this integration. | [Documentation](https://pip.pypa.io/en/stable/user_guide/#requirements-files)
+### Electromechanical Switching Constraints
+The selection of the control algorithm is constrained by the actuation hardware, typically a mechanical relay.
+- **Relay Physics**: Switching a high-current load causes contact erosion due to arcing.
+- **PWM Incompatibility**: Standard high-frequency PWM would destroy a mechanical relay in days.
+- **TPI Solution**: Time Proportional & Integral (TPI) control, or "Slow PWM," adapts PID logic to a time window measured in minutes, ensuring relay longevity while providing precise control.
 
-## How?
+#### Relay Life Calculation
+Standard mechanical relays have an electrical life of ~100,000 cycles at full load.
+- **PWM (1 Hz)**: 86,400 cycles/day → Failure in ~1.2 days.
+- **Standard Thermostat (6 CPH)**: ~26,000 cycles/year → Failure in ~3.8 years.
+- **Optimized TPI (4 CPH)**: ~17,500 cycles/year → Service life > 5-10 years.
 
-1. Create a new repository in GitHub, using this repository as a template by clicking the "Use this template" button in the GitHub UI.
-1. Open your new repository in Visual Studio Code devcontainer (Preferably with the "`Dev Containers: Clone Repository in Named Container Volume...`" option).
-1. Rename all instances of the `integration_blueprint` to `custom_components/<your_integration_domain>` (e.g. `custom_components/awesome_integration`).
-1. Rename all instances of the `Integration Blueprint` to `<Your Integration Name>` (e.g. `Awesome Integration`).
-1. Run the `scripts/develop` to start HA and test out your new integration.
+### The Veto Architecture
+The controller implements a "Veto Architecture" where the Room Temperature PID loop acts as the **Demand Generator**, requesting heat to satisfy occupant comfort, while the Floor Temperature Sensors act as **Safety Gates**, possessing the authority to veto (block) the heat request regardless of the room's demand.
 
-## Next steps
+```mermaid
+graph TD
+    subgraph "Demand Generation"
+        Target[Target Temp] --> Error
+        Room[Room Temp] --> Error
+        Error --> PID[PID Controller]
+        PID --> Demand[Heating Demand %]
+    end
 
-These are some next steps you may want to look into:
-- Add tests to your integration, [`pytest-homeassistant-custom-component`](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component) can help you get started.
-- Add brand images (logo/icon) to https://github.com/home-assistant/brands.
-- Create your first release.
-- Share your integration on the [Home Assistant Forum](https://community.home-assistant.io/).
-- Submit your integration to [HACS](https://hacs.xyz/docs/publish/start).
+    subgraph "Safety Gates (Veto)"
+        Floor[Floor Temp] --> CheckAbs{> Abs Max?}
+        Floor --> CheckDiff{> Diff Max?}
+        Room --> CheckDiff
+        
+        CheckAbs -- Yes --> Veto[VETO ACTIVE]
+        CheckDiff -- Yes --> Veto
+        
+        Veto --> Gate{Safety Gate}
+    end
+
+    Demand --> Gate
+    Gate -- Vetoed --> Zero[0% Output]
+    Gate -- Allowed --> TPI[TPI Logic]
+    TPI --> Relay[Relay Control]
+```
+
+#### Unique Feature: Differential Limiting
+Most commercial thermostats only enforce an absolute floor limit (e.g., 28°C). This integration uniquely implements a **Differential Limit** ($T_{floor} - T_{room} \le \Delta_{max}$), ensuring the floor never feels uncomfortably hot relative to the room, preventing thermal shock to materials and the "hot feet" phenomenon.
+
+**Defining the Constraints:**
+- $T_{room}$: Current Air Temperature
+- $T_{floor}$: Current Floor Temperature
+- $L_{abs}$: Absolute Maximum Floor Temperature (e.g., 28°C)
+- $\Delta_{max}$: Maximum Differential (e.g., 5°C)
+
+**The Logic:**
+The differential limit creates a floating ceiling for the floor temperature:
+$$Limit_{diff} = T_{room} + \Delta_{max}$$
+
+The effective limit for the floor at any given moment is the stricter (lower) of the absolute limit and the differential limit:
+$$Limit_{effective} = \min(L_{abs}, \ T_{room} + \Delta_{max})$$
+
+**Operational Examples:**
+Assuming $L_{abs} = 28^{\circ}$C and $\Delta_{max} = 5^{\circ}$C:
+
+1.  **Scenario A (Cold Room):** $T_{room} = 15^{\circ}$C
+    - $Limit_{effective} = \min(28, 15 + 5) = 20^{\circ}$C
+    - *Result:* Floor is limited to 20°C to prevent thermal shock.
+
+2.  **Scenario B (Warm Room):** $T_{room} = 22^{\circ}$C
+    - $Limit_{effective} = \min(28, 22 + 5) = 27^{\circ}$C
+    - *Result:* Floor can heat to 27°C to maintain room temp.
+
+3.  **Scenario C (Hot Room):** $T_{room} = 26^{\circ}$C
+    - $Limit_{effective} = \min(28, 26 + 5) = 28^{\circ}$C
+    - *Result:* Absolute limit takes over.
+
+#### Control Logic Pseudocode
+```cpp
+// Simplified Control Logic
+void loop() {
+  // 1. Calculate Limits
+  float effective_limit = min(MAX_FLOOR_ABS, room_temp + MAX_DIFF);
+
+  // 2. Safety Veto
+  bool safety_veto = false;
+  if (floor_temp >= effective_limit) {
+    safety_veto = true;
+  } else if (floor_temp > (effective_limit - HYSTERESIS) && was_vetoed) {
+    safety_veto = true; // Hysteresis
+  }
+
+  // 3. PID Demand
+  float demand = calculate_pid(target - room_temp);
+  if (safety_veto) demand = 0;
+
+  // 4. TPI Actuation
+  control_relay(demand);
+}
+```
+
+## Key Features
+
+### Dual-Sensor Control
+- **Room Temperature Sensor**: Primary control variable for occupant comfort.
+- **Floor Temperature Sensor**: Safety monitoring to prevent material damage.
+
+### Advanced Safety Limits
+- **Absolute Maximum Floor Temperature**: Protects flooring materials (default: 28°C).
+- **Differential Maximum**: Limits temperature difference between floor and room (default: 5°C).
+- **Dynamic Limit Calculation**: Effective floor limit adapts based on current room temperature.
+
+### TPI (Time Proportional & Integral) Algorithm
+- **Relay Protection**: Designed for mechanical relays.
+- **Cycle Period**: Configurable (default: 225 seconds).
+- **Minimum Cycle Duration**: Prevents excessive relay switching (default: 60 seconds).
+- **PID Control**: Precise temperature regulation (Kp=10.0, Ki=0.5, Kd=2.0).
+
+### Boost Mode
+- Temporarily relaxes the differential limit when the room is far from the target temperature.
+- Enables faster warm-up from cold conditions.
+- Prevents "control stalling" where floor temperature is capped too low to effectively heat the room.
+- **Activation**: When error ≥ `boost_temp_diff` (default 2.0°C).
+- **Effect**: Increases effective floor limit to allow higher heat output.
+
+## Configuration Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `heater` | Switch entity controlling the heating relay | Required |
+| `room_sensor` | Temperature sensor for room air | Required |
+| `floor_sensor` | Temperature sensor for floor surface | Required |
+| `max_floor_temp` | Absolute maximum floor temperature (°C) | 28.0 |
+| `max_floor_temp_diff` | Maximum floor-room differential (°C) | 5.0 |
+| `cycle_period` | TPI cycle duration (seconds) | 225 |
+| `min_cycle_duration` | Minimum on/off time (seconds) | 60 |
+| `boost_mode` | Enable boost mode for faster warm-up | true |
+| `boost_temp_diff` | Temperature error to activate boost (°C) | 2.0 |
+| `pid_kp` | PID Proportional gain | 10.0 |
+| `pid_ki` | PID Integral gain | 0.5 |
+| `pid_kd` | PID Derivative gain | 2.0 |
+| `safety_hysteresis` | Hysteresis for safety limit (°C) | 0.5 |
+
+## Diagnostic Sensors
+
+The integration provides several diagnostic sensors to monitor internal state (disabled by default):
+
+- `sensor.<name>_heating_demand`: Calculated heating demand (0-100%).
+- `sensor.<name>_effective_floor_limit`: Current dynamic floor temperature limit (°C).
+- `sensor.<name>_safety_veto`: Binary state indicating if safety limits are restricting heating (0/1).
+- `sensor.<name>_pid_integral_error`: Accumulated integral error for PID controller (°C·s).
+
+## State Attributes
+
+The climate entity exposes the following additional attributes:
+
+- `floor_temperature`: Current floor surface temperature.
+- `room_temperature`: Current room air temperature.
+- `effective_floor_limit`: Dynamically calculated floor temperature limit.
+- `demand_percent`: Calculated heating demand.
+- `safety_veto_active`: Whether safety limits are currently restricting heating.
+
+## Use Cases
+
+### Engineered Wood Floors
+- Protects against warping, delamination, and shrinkage.
+- Maintains surface temperature below manufacturer's specified limit (typically 27-28°C).
+
+### Vinyl and LVT
+- Prevents softening or discoloration from excessive heat.
+
+### Comfort Applications
+- Prevents uncomfortable hot floors in cold rooms.
+- Gradual warm-up prevents thermal shock to flooring materials.
+- Maintains ASHRAE 55 / ISO 7730 comfort standards.
+
+## References
+
+Design based on technical analysis of electric radiant floor heating control, emphasizing:
+- Relay cycle-life preservation (NEMA ICS 5-2017 standards).
+- Material safety constraints for temperature-sensitive flooring.
+- "Advanced Control Architectures for Electric Infrared Floor Heating Systems" technical analysis.
+- Physiological comfort metrics (ASHRAE 55, ISO 7730)
+- Control system stability and anti-windup strategies
