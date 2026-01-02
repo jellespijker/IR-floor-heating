@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
 import logging
 import math
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.climate import ClimateEntity
-
 from homeassistant.components.climate.const import (
     ClimateEntityFeature,
     HVACAction,
     HVACMode,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_TEMPERATURE,
@@ -30,20 +28,25 @@ from homeassistant.const import (
 )
 from homeassistant.core import (
     DOMAIN as HOMEASSISTANT_DOMAIN,
+)
+from homeassistant.core import (
     CoreState,
     Event,
     EventStateChangedData,
-    HomeAssistant,
     State,
     callback,
 )
 from homeassistant.helpers.device import async_entity_id_to_device
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
 from homeassistant.helpers.restore_state import RestoreEntity
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
     CONF_BOOST_MODE,
@@ -76,7 +79,6 @@ from .const import (
     DEFAULT_PID_KI,
     DEFAULT_PID_KP,
     DEFAULT_SAFETY_HYSTERESIS,
-    DEFAULT_TOLERANCE,
     DOMAIN,
 )
 
@@ -164,13 +166,17 @@ async def async_setup_entry(
 
 
 class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
-    """Representation of an IR floor heating climate device with dual-sensor TPI control."""
+    """
+    Representation of an IR floor heating climate device.
+
+    Includes dual-sensor TPI control.
+    """
 
     _attr_should_poll = False
     _attr_has_entity_name = True
     _enable_turn_on_off_backwards_compatibility = False
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         hass: HomeAssistant,
         *,
@@ -509,7 +515,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         """Prevent the device from keep running if HVACMode.OFF."""
         if self._hvac_mode == HVACMode.OFF and self._is_device_active:
             _LOGGER.warning(
-                "The climate mode is OFF, but the switch device is ON. Turning off device %s",
+                "The climate mode is OFF, but the switch device is ON. "
+                "Turning off device %s",
                 self.heater_entity_id,
             )
             await self._async_heater_turn_off()
@@ -533,11 +540,16 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         try:
             room_temp = float(state.state)
             if not math.isfinite(room_temp):
-                raise ValueError(f"Sensor has illegal state {state.state}")  # noqa: TRY301
+                _LOGGER.exception(
+                    "Unable to update room temperature from sensor: "
+                    "Sensor has illegal state %s",
+                    state.state,
+                )
+                return
             self._last_room_temp = self._room_temp
             self._room_temp = room_temp
-        except ValueError as ex:
-            _LOGGER.error("Unable to update room temperature from sensor: %s", ex)
+        except ValueError:
+            _LOGGER.exception("Unable to update room temperature from sensor")
 
     @callback
     def _async_update_floor_temp(self, state: State) -> None:
@@ -545,13 +557,18 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         try:
             floor_temp = float(state.state)
             if not math.isfinite(floor_temp):
-                raise ValueError(f"Sensor has illegal state {state.state}")  # noqa: TRY301
+                _LOGGER.exception(
+                    "Unable to update floor temperature from sensor: "
+                    "Sensor has illegal state %s",
+                    state.state,
+                )
+                return
             self._floor_temp = floor_temp
-        except ValueError as ex:
-            _LOGGER.error("Unable to update floor temperature from sensor: %s", ex)
+        except ValueError:
+            _LOGGER.exception("Unable to update floor temperature from sensor")
 
     def _calculate_effective_floor_limit(self) -> float:
-        """Calculate the effective floor temperature limit based on current conditions."""
+        """Calculate effective floor temperature limit based on conditions."""
         if self._room_temp is None:
             return self._max_floor_temp
 
@@ -570,7 +587,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                     relaxed_diff, self._max_floor_temp_diff * 2.5
                 )
                 _LOGGER.info(
-                    "Boost mode active: temp error %.1f°C, relaxed floor limit from %.1f°C to %.1f°C",
+                    "Boost mode active: temp error %.1f°C, relaxed floor limit "
+                    "from %.1f°C to %.1f°C",
                     temp_error,
                     self._room_temp + self._max_floor_temp_diff,
                     diff_limit,
@@ -579,19 +597,25 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         # Return the stricter of absolute and differential limits
         return min(self._max_floor_temp, diff_limit)
 
-    def _check_safety_veto(self, bypass_hysteresis: bool = False) -> bool:
-        """Check if safety veto should be active based on floor temperature limits.
+    def _check_safety_veto(self, *, bypass_hysteresis: bool = False) -> bool:
+        """
+        Check if safety veto should be active.
+
+        Based on floor temperature limits.
 
         Args:
-            bypass_hysteresis: If True, ignores hysteresis band and makes immediate decision.
-                             Used when setpoint changes to allow immediate veto release.
+            bypass_hysteresis: If True, ignores hysteresis band.
+                When True, makes immediate decision.
+                Used when setpoint changes to allow immediate veto release.
+
         """
         if self._floor_temp is None or self._room_temp is None:
             # If we can't read sensors, veto heating for safety
             _LOGGER.warning(
-                "SAFETY VETO ACTIVE: Missing sensor data (Floor: %s, Room: %s) - Heating disabled for safety",
-                "None" if self._floor_temp is None else f"{self._floor_temp:.1f}°C",
-                "None" if self._room_temp is None else f"{self._room_temp:.1f}°C",
+                "SAFETY VETO ACTIVE: Missing sensor data (Floor: %s, Room: %s) - "
+                "Heating disabled for safety",
+                ("None" if self._floor_temp is None else f"{self._floor_temp:.1f}°C"),
+                ("None" if self._room_temp is None else f"{self._room_temp:.1f}°C"),
             )
             return True
 
@@ -601,7 +625,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         if self._floor_temp >= effective_limit:
             if not self._safety_veto_active:
                 _LOGGER.warning(
-                    "SAFETY VETO ENGAGED: Floor temp %.1f°C >= Effective limit %.1f°C - Heating OFF",
+                    "SAFETY VETO ENGAGED: Floor temp %.1f°C >= "
+                    "Effective limit %.1f°C - Heating OFF",
                     self._floor_temp,
                     effective_limit,
                 )
@@ -613,7 +638,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             # In hysteresis band: maintain previous veto state
             if self._safety_veto_active:
                 _LOGGER.debug(
-                    "SAFETY VETO MAINTAINED: Floor temp %.1f°C in hysteresis band (%.1f°C to %.1f°C)",
+                    "SAFETY VETO MAINTAINED: Floor temp %.1f°C "
+                    "in hysteresis band (%.1f°C to %.1f°C)",
                     self._floor_temp,
                     effective_limit - self._safety_hysteresis,
                     effective_limit,
@@ -623,7 +649,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         # Below hysteresis band - release veto
         if self._safety_veto_active:
             _LOGGER.info(
-                "SAFETY VETO RELEASED: Floor temp %.1f°C < (Limit %.1f°C - Hysteresis %.1f°C) - Heating allowed",
+                "SAFETY VETO RELEASED: Floor temp %.1f°C < "
+                "(Limit %.1f°C - Hysteresis %.1f°C) - Heating allowed",
                 self._floor_temp,
                 effective_limit,
                 self._safety_hysteresis,
@@ -669,8 +696,9 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
         self._last_error = error
 
-        # Only log if demand changed significantly (>5%) or periodically
-        if abs(demand - self._last_logged_demand) > 5.0:
+        # Only log if demand changed significantly or periodically
+        demand_change_threshold = 5.0
+        if abs(demand - self._last_logged_demand) > demand_change_threshold:
             _LOGGER.debug(
                 "PID demand: %.1f%% (error=%.2f°C, P=%.1f, I=%.1f, D=%.1f)",
                 demand,
@@ -684,7 +712,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         return demand
 
     async def _async_control_heating(
-        self, time: datetime | None = None, force: bool = False
+        self, _time: datetime | None = None, *, force: bool = False
     ) -> None:
         """Control heating using TPI algorithm with safety veto architecture."""
         async with self._temp_lock:
@@ -698,7 +726,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                 # Reset cycle to start fresh when heating becomes active
                 self._cycle_start_time = None
                 _LOGGER.info(
-                    "IR floor heating active. Room: %.1f°C, Floor: %.1f°C, Target: %.1f°C",
+                    "IR floor heating active. Room: %.1f°C, Floor: %.1f°C, "
+                    "Target: %.1f°C",
                     self._room_temp,
                     self._floor_temp,
                     self._target_temp,
@@ -707,7 +736,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             if not self._active or self._hvac_mode == HVACMode.OFF:
                 return
 
-            # Check safety veto (bypass hysteresis on forced updates like setpoint changes)
+            # Check safety veto (bypass hysteresis on forced updates like setpoint
+            # changes)
             self._safety_veto_active = self._check_safety_veto(bypass_hysteresis=force)
 
             if self._safety_veto_active:
@@ -720,12 +750,12 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             if force:
                 self._cycle_start_time = None
 
-    async def _async_tpi_cycle(self, time: datetime | None = None) -> None:
+    async def _async_tpi_cycle(self, _time: datetime | None = None) -> None:
         """Execute Time Proportional & Integral (TPI) control cycle."""
         if not self._active or self._hvac_mode == HVACMode.OFF:
             return
 
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
 
         # Initialize cycle start time
         if self._cycle_start_time is None:

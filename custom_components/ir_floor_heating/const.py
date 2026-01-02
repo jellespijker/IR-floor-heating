@@ -12,8 +12,8 @@ CONF_FLOOR_SENSOR = "floor_sensor"
 CONF_TARGET_TEMP = "target_temp"
 CONF_MAX_FLOOR_TEMP = "max_floor_temp"
 CONF_MAX_FLOOR_TEMP_DIFF = "max_floor_temp_diff"
-CONF_MIN_TEMP = "min_temp"  # TODO: Implement in climate
-CONF_MAX_TEMP = "max_temp"  # TODO: Implement in climate
+CONF_MIN_TEMP = "min_temp"
+CONF_MAX_TEMP = "max_temp"
 CONF_MIN_CYCLE_DURATION = "min_cycle_duration"
 CONF_CYCLE_PERIOD = "cycle_period"
 CONF_KEEP_ALIVE = "keep_alive"
@@ -32,9 +32,7 @@ DEFAULT_NAME = "IR floor heating"
 DEFAULT_TOLERANCE = 0.3
 DEFAULT_MAX_FLOOR_TEMP = 28.0  # °C - Safe for engineered wood/laminate
 DEFAULT_MAX_FLOOR_TEMP_DIFF = 5.0  # °C - Maximum floor-room differential
-DEFAULT_CYCLE_PERIOD = (
-    600
-)  # 10 minutes (6 cycles per hour for relay protection)
+DEFAULT_CYCLE_PERIOD = 600  # 10 minutes (6 cycles per hour for relay protection)
 DEFAULT_MIN_CYCLE_DURATION = 60  # 1 minute minimum on/off time
 DEFAULT_BOOST_TEMP_DIFF = (
     2.0  # °C - Relax differential limit if room is this far from target

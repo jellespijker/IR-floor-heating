@@ -10,11 +10,14 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
-from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.core import Event, EventStateChangedData, callback
 from homeassistant.helpers.event import async_track_state_change_event
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 
@@ -70,7 +73,7 @@ class IRFloorHeatingBaseSensor(SensorEntity):
 
         # Update when climate entity updates
         @callback
-        def _handle_climate_update(event: Event[EventStateChangedData]) -> None:
+        def _handle_climate_update(_event: Event[EventStateChangedData]) -> None:
             """Handle updates from the climate entity only if value changed."""
             current_value = self.native_value
             # Only write state if the value actually changed

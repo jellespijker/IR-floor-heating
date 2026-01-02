@@ -1,5 +1,5 @@
 {
     "name": "IR Floor heating",
-    "homeassistant": "2025.2.4",
+    "homeassistant": "2025.12.3",
     "hacs": "2.0.5"
 }

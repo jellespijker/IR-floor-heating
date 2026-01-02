@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 import voluptuous as vol
-
 from homeassistant.components.climate.const import HVACMode
 from homeassistant.const import (
     CONF_NAME,
@@ -51,7 +52,6 @@ from .const import (
     DEFAULT_PID_KI,
     DEFAULT_PID_KP,
     DEFAULT_SAFETY_HYSTERESIS,
-    DEFAULT_TOLERANCE,
     DOMAIN,
 )
 
@@ -260,4 +260,4 @@ class IRFloorHeatingConfigFlowHandler(SchemaConfigFlowHandler, domain=DOMAIN):
 
     def async_config_entry_title(self, options: Mapping[str, Any]) -> str:
         """Return config entry title."""
-        return cast(str, options[CONF_NAME])
+        return cast("str", options[CONF_NAME])
