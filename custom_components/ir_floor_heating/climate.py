@@ -97,7 +97,7 @@ async def async_setup_entry(
     # Read from options if available, otherwise fall back to data
     # This ensures compatibility with both initial setup and options updates
     config = config_entry.options if config_entry.options else config_entry.data
-    
+
     name: str = config.get(CONF_NAME, DEFAULT_NAME)
     heater_entity_id: str = config[CONF_HEATER]
     room_sensor_entity_id: str = config[CONF_ROOM_SENSOR]
@@ -492,10 +492,19 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
     ) -> None:
         """Handle room temperature changes."""
         new_state = event.data["new_state"]
-        if new_state is None or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        if new_state is None:
             return
 
-        self._async_update_room_temp(new_state)
+        if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            # Sensor unavailable - clear temperature and re-evaluate for safety
+            self._last_room_temp = self._room_temp
+            self._room_temp = None
+            _LOGGER.warning(
+                "Room sensor unavailable - clearing temperature for safety evaluation"
+            )
+        else:
+            self._async_update_room_temp(new_state)
+
         try:
             await self._async_control_heating()
         finally:
@@ -506,10 +515,19 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
     ) -> None:
         """Handle floor temperature changes."""
         new_state = event.data["new_state"]
-        if new_state is None or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        if new_state is None:
             return
 
-        self._async_update_floor_temp(new_state)
+        if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            # Sensor unavailable - clear temperature and re-evaluate for safety
+            self._floor_temp = None
+            _LOGGER.warning(
+                "Floor sensor unavailable - clearing temperature and "
+                "activating safety veto"
+            )
+        else:
+            self._async_update_floor_temp(new_state)
+
         try:
             await self._async_control_heating()
         finally:
