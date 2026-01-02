@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.climate import ClimateEntity
@@ -755,7 +755,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         if not self._active or self._hvac_mode == HVACMode.OFF:
             return
 
-        current_time = datetime.now(timezone.utc)
+        current_time = datetime.now(UTC)
 
         # Initialize cycle start time
         if self._cycle_start_time is None:
