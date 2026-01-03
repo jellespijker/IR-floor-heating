@@ -384,7 +384,10 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         if self.hass.state is CoreState.running:
             _async_startup()
         else:
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_START, _async_startup)
+            remove_listener = self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_START, _async_startup
+            )
+            self.async_on_remove(remove_listener)
 
         # Restore previous state
         if (old_state := await self.async_get_last_state()) is not None:
