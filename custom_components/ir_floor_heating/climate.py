@@ -689,9 +689,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             self._integral_error += error
             # Clamp integral to prevent excessive windup
             max_integral = 100.0 / self._ki if self._ki > 0 else 0
-            self._integral_error = max(
-                -max_integral, min(max_integral, self._integral_error)
-            )
+            # Clamp lower bound to 0.0 to prevent negative "cooling" debt
+            self._integral_error = max(0.0, min(max_integral, self._integral_error))
         i_term = self._ki * self._integral_error
 
         # Derivative term
