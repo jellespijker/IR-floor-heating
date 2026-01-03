@@ -11,27 +11,35 @@ The specific system under analysis involves a high-load resistive heating elemen
 ## Theoretical Background
 
 ### The Operational Context
+
 Electric underfloor heating systems, particularly those utilizing carbon film technology, operate on the principle of Joule heating. The control problem arises from the decoupling of the heat source (the floor) and the controlled variable (the room air temperature). In modern construction involving temperature-sensitive materials like engineered wood, laminate, or vinyl, unbounded operation poses a severe risk of warping, delamination, or discoloration. Furthermore, physiological studies indicate that floor surface temperatures exceeding 29°C (84°F) can cause discomfort.
 
 ### Thermodynamics of the Heating Plant
+
 The plant consists of the electric IR film, the floor assembly, and the enclosed air volume.
+
 - **Rapid Generation**: Carbon strips reach operating temperature within seconds.
 - **Conductive Latency**: The heat must traverse the flooring stack, introducing a transport delay (dead time) of 10 to 30 minutes.
 - **Thermal Storage**: The floor assembly acts as a thermal capacitor, smoothing rapid switching but introducing inertia.
 
 ### Electromechanical Switching Constraints
+
 The selection of the control algorithm is constrained by the actuation hardware, typically a mechanical relay.
+
 - **Relay Physics**: Switching a high-current load causes contact erosion due to arcing.
 - **PWM Incompatibility**: Standard high-frequency PWM would destroy a mechanical relay in days.
 - **TPI Solution**: Time Proportional & Integral (TPI) control, or "Slow PWM," adapts PID logic to a time window measured in minutes, ensuring relay longevity while providing precise control.
 
 #### Relay Life Calculation
+
 Standard mechanical relays have an electrical life of ~100,000 cycles at full load.
+
 - **PWM (1 Hz)**: 86,400 cycles/day → Failure in ~1.2 days.
 - **Standard Thermostat (6 CPH)**: ~26,000 cycles/year → Failure in ~3.8 years.
 - **Optimized TPI (4 CPH)**: ~17,500 cycles/year → Service life > 5-10 years.
 
 ### The Veto Architecture
+
 The controller implements a "Veto Architecture" where the Room Temperature PID loop acts as the **Demand Generator**, requesting heat to satisfy occupant comfort, while the Floor Temperature Sensors act as **Safety Gates**, possessing the authority to veto (block) the heat request regardless of the room's demand.
 
 ```mermaid
@@ -47,10 +55,10 @@ graph TD
         Floor[Floor Temp] --> CheckAbs{> Abs Max?}
         Floor --> CheckDiff{> Diff Max?}
         Room --> CheckDiff
-        
+
         CheckAbs -- Yes --> Veto[VETO ACTIVE]
         CheckDiff -- Yes --> Veto
-        
+
         Veto --> Gate{Safety Gate}
     end
 
@@ -61,9 +69,11 @@ graph TD
 ```
 
 #### Unique Feature: Differential Limiting
+
 Most commercial thermostats only enforce an absolute floor limit (e.g., 28°C). This integration uniquely implements a **Differential Limit** ($T_{floor} - T_{room} \le \Delta_{max}$), ensuring the floor never feels uncomfortably hot relative to the room, preventing thermal shock to materials and the "hot feet" phenomenon.
 
 **Defining the Constraints:**
+
 - $T_{room}$: Current Air Temperature
 - $T_{floor}$: Current Floor Temperature
 - $L_{abs}$: Absolute Maximum Floor Temperature (e.g., 28°C)
@@ -80,18 +90,21 @@ $$Limit_{effective} = \min(L_{abs}, \ T_{room} + \Delta_{max})$$
 Assuming $L_{abs} = 28^{\circ}$C and $\Delta_{max} = 5^{\circ}$C:
 
 1.  **Scenario A (Cold Room):** $T_{room} = 15^{\circ}$C
+
     - $Limit_{effective} = \min(28, 15 + 5) = 20^{\circ}$C
-    - *Result:* Floor is limited to 20°C to prevent thermal shock.
+    - _Result:_ Floor is limited to 20°C to prevent thermal shock.
 
 2.  **Scenario B (Warm Room):** $T_{room} = 22^{\circ}$C
+
     - $Limit_{effective} = \min(28, 22 + 5) = 27^{\circ}$C
-    - *Result:* Floor can heat to 27°C to maintain room temp.
+    - _Result:_ Floor can heat to 27°C to maintain room temp.
 
 3.  **Scenario C (Hot Room):** $T_{room} = 26^{\circ}$C
     - $Limit_{effective} = \min(28, 26 + 5) = 28^{\circ}$C
-    - *Result:* Absolute limit takes over.
+    - _Result:_ Absolute limit takes over.
 
 #### Control Logic Pseudocode
+
 ```cpp
 // Simplified Control Logic
 void loop() {
@@ -115,24 +128,95 @@ void loop() {
 }
 ```
 
+## Dual-PID Min-Selector Architecture
+
+This integration implements an advanced **Dual-PID "Select-Low" (Min-Selector) Architecture** to maximize heating performance while respecting floor temperature limits.
+
+### How It Works
+
+The system uses two independent PID controllers operating in parallel:
+
+1. **Room Temperature PID**: Calculates heating demand to reach the user's target temperature
+2. **Floor Limiter PID**: Calculates the maximum allowable heating demand based on the current floor temperature relative to the effective floor limit
+
+The final demand is the **minimum** of these two values (hence "Select-Low"), ensuring that whichever constraint is tighter takes precedence.
+
+### Min-Selector Logic with Anti-Windup
+
+```mermaid
+graph LR
+    subgraph "Demand Calculation"
+        Room_T["Room Temp"]
+        Target_T["Target Temp"]
+        Room_T -->|Error| Room_PID["Room PID<br/>Kp, Ki, Kd"]
+        Target_T -->|Error| Room_PID
+        Room_PID -->|Room Demand| Selector["Min-Selector"]
+
+        Floor_T["Floor Temp"]
+        Eff_Limit["Effective Floor Limit"]
+        Floor_T -->|Error| Floor_PID["Floor PID<br/>Kp, Ki, Kd"]
+        Eff_Limit -->|Error| Floor_PID
+        Floor_PID -->|Floor Demand| Selector
+
+        Selector -->|Final Demand| AW["Anti-Windup Check"]
+    end
+
+    subgraph "Anti-Windup"
+        AW -->|Floor restricts Room?| Pause["Pause Room PID<br/>Integration"]
+        AW -->|No restriction| Normal["Normal PID<br/>Operation"]
+    end
+
+    AW -->|Final Demand| TPI["TPI Controller"]
+    TPI -->|Relay State| Relay["Mechanical Relay"]
+```
+
+**Key Features of the Dual-PID Architecture:**
+
+- **Smooth Floor Limit Approach**: The floor PID smoothly approaches the limit instead of hard cutoff, reducing temperature oscillation
+- **Anti-Windup Coordination**: When the floor limit restricts heating, the room PID's integral term is paused to prevent windup
+- **Decoupled Tuning**: Room and floor controllers can be tuned independently for optimal performance
+- **Diagnostic Visibility**: All internal states (both PID demands, integral errors, selected demand) are exposed via sensors for fine-tuning
+
+### Room Temperature PID
+
+Controls heating demand to reach the user's target temperature.
+
+- **Default Kp**: 80.0 (aggressive proportional response)
+- **Default Ki**: 2.0 (medium integral action for steady-state accuracy)
+- **Default Kd**: 15.0 (significant damping for smooth response)
+
+### Floor Limiter PID
+
+Controls the maximum heating demand based on floor temperature approaching the effective limit.
+
+- **Default Kp**: 20.0 (moderate proportional feedback)
+- **Default Ki**: 0.5 (gentle integral for smooth limit approach)
+- **Default Kd**: 10.0 (damping to prevent oscillation at the limit)
+
+This soft-limit approach allows the floor temperature to smoothly approach the limit without hard cutoffs, improving thermal efficiency and reducing comfort disruptions.
+
 ## Key Features
 
 ### Dual-Sensor Control
+
 - **Room Temperature Sensor**: Primary control variable for occupant comfort.
 - **Floor Temperature Sensor**: Safety monitoring to prevent material damage.
 
 ### Advanced Safety Limits
+
 - **Absolute Maximum Floor Temperature**: Protects flooring materials (default: 28°C).
 - **Differential Maximum**: Limits temperature difference between floor and room (default: 5°C).
 - **Dynamic Limit Calculation**: Effective floor limit adapts based on current room temperature.
 
 ### TPI (Time Proportional & Integral) Algorithm
+
 - **Relay Protection**: Designed for mechanical relays.
 - **Cycle Period**: Configurable (default: 225 seconds).
 - **Minimum Cycle Duration**: Prevents excessive relay switching (default: 60 seconds).
 - **PID Control**: Precise temperature regulation (Kp=10.0, Ki=0.5, Kd=2.0).
 
 ### Boost Mode
+
 - Temporarily relaxes the differential limit when the room is far from the target temperature.
 - Enables faster warm-up from cold conditions.
 - Prevents "control stalling" where floor temperature is capped too low to effectively heat the room.
@@ -141,30 +225,37 @@ void loop() {
 
 ## Configuration Parameters
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `heater` | Switch entity controlling the heating relay | Required |
-| `room_sensor` | Temperature sensor for room air | Required |
-| `floor_sensor` | Temperature sensor for floor surface | Required |
-| `max_floor_temp` | Absolute maximum floor temperature (°C) | 28.0 |
-| `max_floor_temp_diff` | Maximum floor-room differential (°C) | 5.0 |
-| `cycle_period` | TPI cycle duration (seconds) | 225 |
-| `min_cycle_duration` | Minimum on/off time (seconds) | 60 |
-| `boost_mode` | Enable boost mode for faster warm-up | true |
-| `boost_temp_diff` | Temperature error to activate boost (°C) | 2.0 |
-| `pid_kp` | PID Proportional gain | 10.0 |
-| `pid_ki` | PID Integral gain | 0.5 |
-| `pid_kd` | PID Derivative gain | 2.0 |
-| `safety_hysteresis` | Hysteresis for safety limit (°C) | 0.5 |
+| Parameter             | Description                                 | Default  |
+| --------------------- | ------------------------------------------- | -------- |
+| `heater`              | Switch entity controlling the heating relay | Required |
+| `room_sensor`         | Temperature sensor for room air             | Required |
+| `floor_sensor`        | Temperature sensor for floor surface        | Required |
+| `max_floor_temp`      | Absolute maximum floor temperature (°C)     | 28.0     |
+| `max_floor_temp_diff` | Maximum floor-room differential (°C)        | 8.0      |
+| `cycle_period`        | TPI cycle duration (seconds)                | 900      |
+| `min_cycle_duration`  | Minimum on/off time (seconds)               | 60       |
+| `boost_mode`          | Enable boost mode for faster warm-up        | true     |
+| `boost_temp_diff`     | Temperature error to activate boost (°C)    | 1.5      |
+| `pid_kp`              | Room PID Proportional gain                  | 80.0     |
+| `pid_ki`              | Room PID Integral gain                      | 2.0      |
+| `pid_kd`              | Room PID Derivative gain                    | 15.0     |
+| `floor_pid_kp`        | Floor Limiter PID Proportional gain         | 20.0     |
+| `floor_pid_ki`        | Floor Limiter PID Integral gain             | 0.5      |
+| `floor_pid_kd`        | Floor Limiter PID Derivative gain           | 10.0     |
+| `safety_hysteresis`   | Hysteresis for safety limit (°C)            | 0.25     |
 
 ## Diagnostic Sensors
 
 The integration provides several diagnostic sensors to monitor internal state (disabled by default):
 
-- `sensor.<name>_heating_demand`: Calculated heating demand (0-100%).
+- `sensor.<name>_heating_demand`: Final heating demand (0-100%, result of min-selector).
+- `sensor.<name>_room_pid_demand`: Room temperature PID demand (0-100%).
+- `sensor.<name>_floor_pid_demand`: Floor limiter PID demand (0-100%).
 - `sensor.<name>_effective_floor_limit`: Current dynamic floor temperature limit (°C).
 - `sensor.<name>_safety_veto`: Binary state indicating if safety limits are restricting heating (0/1).
-- `sensor.<name>_pid_integral_error`: Accumulated integral error for PID controller (°C·s).
+- `sensor.<name>_integral_error`: Room PID accumulated integral error for diagnostics (°C·s).
+- `sensor.<name>_room_integral_error`: Room PID integral error term (°C·s).
+- `sensor.<name>_floor_integral_error`: Floor limiter PID integral error term (°C·s).
 
 ## State Attributes
 
@@ -179,13 +270,16 @@ The climate entity exposes the following additional attributes:
 ## Use Cases
 
 ### Engineered Wood Floors
+
 - Protects against warping, delamination, and shrinkage.
 - Maintains surface temperature below manufacturer's specified limit (typically 27-28°C).
 
 ### Vinyl and LVT
+
 - Prevents softening or discoloration from excessive heat.
 
 ### Comfort Applications
+
 - Prevents uncomfortable hot floors in cold rooms.
 - Gradual warm-up prevents thermal shock to flooring materials.
 - Maintains ASHRAE 55 / ISO 7730 comfort standards.
@@ -193,6 +287,7 @@ The climate entity exposes the following additional attributes:
 ## References
 
 Design based on technical analysis of electric radiant floor heating control, emphasizing:
+
 - Relay cycle-life preservation (NEMA ICS 5-2017 standards).
 - Material safety constraints for temperature-sensitive flooring.
 - "Advanced Control Architectures for Electric Infrared Floor Heating Systems" technical analysis.
