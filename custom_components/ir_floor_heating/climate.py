@@ -94,41 +94,37 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the IR floor heating climate entity from a config entry."""
-    name: str = config_entry.options.get(CONF_NAME, DEFAULT_NAME)
-    heater_entity_id: str = config_entry.options[CONF_HEATER]
-    room_sensor_entity_id: str = config_entry.options[CONF_ROOM_SENSOR]
-    floor_sensor_entity_id: str = config_entry.options[CONF_FLOOR_SENSOR]
-    min_temp: float | None = config_entry.options.get(CONF_MIN_TEMP)
-    max_temp: float | None = config_entry.options.get(CONF_MAX_TEMP)
-    target_temp: float | None = config_entry.options.get(CONF_TARGET_TEMP)
-    max_floor_temp: float = config_entry.options.get(
-        CONF_MAX_FLOOR_TEMP, DEFAULT_MAX_FLOOR_TEMP
-    )
-    max_floor_temp_diff: float = config_entry.options.get(
+    # Read from options if available, otherwise fall back to data
+    # This ensures compatibility with both initial setup and options updates
+    config = config_entry.options if config_entry.options else config_entry.data
+
+    name: str = config.get(CONF_NAME, DEFAULT_NAME)
+    heater_entity_id: str = config[CONF_HEATER]
+    room_sensor_entity_id: str = config[CONF_ROOM_SENSOR]
+    floor_sensor_entity_id: str = config[CONF_FLOOR_SENSOR]
+    min_temp: float | None = config.get(CONF_MIN_TEMP)
+    max_temp: float | None = config.get(CONF_MAX_TEMP)
+    target_temp: float | None = config.get(CONF_TARGET_TEMP)
+    max_floor_temp: float = config.get(CONF_MAX_FLOOR_TEMP, DEFAULT_MAX_FLOOR_TEMP)
+    max_floor_temp_diff: float = config.get(
         CONF_MAX_FLOOR_TEMP_DIFF, DEFAULT_MAX_FLOOR_TEMP_DIFF
     )
-    min_cycle_duration: int = config_entry.options.get(
+    min_cycle_duration: int = config.get(
         CONF_MIN_CYCLE_DURATION, DEFAULT_MIN_CYCLE_DURATION
     )
-    cycle_period: int = config_entry.options.get(
-        CONF_CYCLE_PERIOD, DEFAULT_CYCLE_PERIOD
-    )
-    keep_alive: int | None = config_entry.options.get(CONF_KEEP_ALIVE)
-    initial_hvac_mode: HVACMode | None = config_entry.options.get(
-        CONF_INITIAL_HVAC_MODE
-    )
-    precision: float | None = config_entry.options.get(CONF_PRECISION)
-    target_temperature_step: float | None = config_entry.options.get(CONF_TEMP_STEP)
-    boost_mode: bool = config_entry.options.get(CONF_BOOST_MODE, True)
-    boost_temp_diff: float = config_entry.options.get(
-        CONF_BOOST_TEMP_DIFF, DEFAULT_BOOST_TEMP_DIFF
-    )
-    safety_hysteresis: float = config_entry.options.get(
+    cycle_period: int = config.get(CONF_CYCLE_PERIOD, DEFAULT_CYCLE_PERIOD)
+    keep_alive: int | None = config.get(CONF_KEEP_ALIVE)
+    initial_hvac_mode: HVACMode | None = config.get(CONF_INITIAL_HVAC_MODE)
+    precision: float | None = config.get(CONF_PRECISION)
+    target_temperature_step: float | None = config.get(CONF_TEMP_STEP)
+    boost_mode: bool = config.get(CONF_BOOST_MODE, True)
+    boost_temp_diff: float = config.get(CONF_BOOST_TEMP_DIFF, DEFAULT_BOOST_TEMP_DIFF)
+    safety_hysteresis: float = config.get(
         CONF_SAFETY_HYSTERESIS, DEFAULT_SAFETY_HYSTERESIS
     )
-    pid_kp: float = config_entry.options.get(CONF_PID_KP, DEFAULT_PID_KP)
-    pid_ki: float = config_entry.options.get(CONF_PID_KI, DEFAULT_PID_KI)
-    pid_kd: float = config_entry.options.get(CONF_PID_KD, DEFAULT_PID_KD)
+    pid_kp: float = config.get(CONF_PID_KP, DEFAULT_PID_KP)
+    pid_ki: float = config.get(CONF_PID_KI, DEFAULT_PID_KI)
+    pid_kd: float = config.get(CONF_PID_KD, DEFAULT_PID_KD)
     unit = hass.config.units.temperature_unit
     unique_id = config_entry.entry_id
 
@@ -488,10 +484,19 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
     ) -> None:
         """Handle room temperature changes."""
         new_state = event.data["new_state"]
-        if new_state is None or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        if new_state is None:
             return
 
-        self._async_update_room_temp(new_state)
+        if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            # Sensor unavailable - clear temperature and re-evaluate for safety
+            self._last_room_temp = self._room_temp
+            self._room_temp = None
+            _LOGGER.warning(
+                "Room sensor unavailable - clearing temperature for safety evaluation"
+            )
+        else:
+            self._async_update_room_temp(new_state)
+
         try:
             await self._async_control_heating()
         finally:
@@ -502,10 +507,19 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
     ) -> None:
         """Handle floor temperature changes."""
         new_state = event.data["new_state"]
-        if new_state is None or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        if new_state is None:
             return
 
-        self._async_update_floor_temp(new_state)
+        if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            # Sensor unavailable - clear temperature and re-evaluate for safety
+            self._floor_temp = None
+            _LOGGER.warning(
+                "Floor sensor unavailable - clearing temperature and "
+                "activating safety veto"
+            )
+        else:
+            self._async_update_floor_temp(new_state)
+
         try:
             await self._async_control_heating()
         finally:
