@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -98,6 +99,39 @@ _LOGGER = logging.getLogger(__name__)
 PARALLEL_UPDATES = 1
 
 
+@dataclass
+class ClimateConfig:
+    """Configuration for IR floor heating climate entity."""
+
+    hass: HomeAssistant
+    name: str
+    heater_entity_id: str
+    room_sensor_entity_id: str
+    floor_sensor_entity_id: str
+    min_temp: float | None
+    max_temp: float | None
+    target_temp: float | None
+    max_floor_temp: float
+    max_floor_temp_diff: float
+    min_cycle_duration: timedelta
+    cycle_period: timedelta
+    keep_alive: timedelta | None
+    initial_hvac_mode: HVACMode | None
+    precision: float | None
+    target_temperature_step: float | None
+    unit: UnitOfTemperature
+    unique_id: str
+    boost_mode: bool
+    boost_temp_diff: float
+    safety_hysteresis: float
+    pid_kp: float
+    pid_ki: float
+    pid_kd: float
+    floor_pid_kp: float
+    floor_pid_ki: float
+    floor_pid_kd: float
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -108,68 +142,47 @@ async def async_setup_entry(
     # This ensures compatibility with both initial setup and options updates
     config = config_entry.options if config_entry.options else config_entry.data
 
-    name: str = config.get(CONF_NAME, DEFAULT_NAME)
-    heater_entity_id: str = config[CONF_HEATER]
-    room_sensor_entity_id: str = config[CONF_ROOM_SENSOR]
-    floor_sensor_entity_id: str = config[CONF_FLOOR_SENSOR]
-    min_temp: float | None = config.get(CONF_MIN_TEMP)
-    max_temp: float | None = config.get(CONF_MAX_TEMP)
-    target_temp: float | None = config.get(CONF_TARGET_TEMP)
-    max_floor_temp: float = config.get(CONF_MAX_FLOOR_TEMP, DEFAULT_MAX_FLOOR_TEMP)
-    max_floor_temp_diff: float = config.get(
-        CONF_MAX_FLOOR_TEMP_DIFF, DEFAULT_MAX_FLOOR_TEMP_DIFF
+    climate_config = ClimateConfig(
+        hass=hass,
+        name=config.get(CONF_NAME, DEFAULT_NAME),
+        heater_entity_id=config[CONF_HEATER],
+        room_sensor_entity_id=config[CONF_ROOM_SENSOR],
+        floor_sensor_entity_id=config[CONF_FLOOR_SENSOR],
+        min_temp=config.get(CONF_MIN_TEMP),
+        max_temp=config.get(CONF_MAX_TEMP),
+        target_temp=config.get(CONF_TARGET_TEMP),
+        max_floor_temp=config.get(CONF_MAX_FLOOR_TEMP, DEFAULT_MAX_FLOOR_TEMP),
+        max_floor_temp_diff=config.get(
+            CONF_MAX_FLOOR_TEMP_DIFF, DEFAULT_MAX_FLOOR_TEMP_DIFF
+        ),
+        min_cycle_duration=timedelta(
+            seconds=config.get(CONF_MIN_CYCLE_DURATION, DEFAULT_MIN_CYCLE_DURATION)
+        ),
+        cycle_period=timedelta(
+            seconds=config.get(CONF_CYCLE_PERIOD, DEFAULT_CYCLE_PERIOD)
+        ),
+        keep_alive=(
+            timedelta(seconds=config.get(CONF_KEEP_ALIVE))
+            if config.get(CONF_KEEP_ALIVE)
+            else None
+        ),
+        initial_hvac_mode=config.get(CONF_INITIAL_HVAC_MODE),
+        precision=config.get(CONF_PRECISION),
+        target_temperature_step=config.get(CONF_TEMP_STEP),
+        unit=hass.config.units.temperature_unit,
+        unique_id=config_entry.entry_id,
+        boost_mode=config.get(CONF_BOOST_MODE, True),
+        boost_temp_diff=config.get(CONF_BOOST_TEMP_DIFF, DEFAULT_BOOST_TEMP_DIFF),
+        safety_hysteresis=config.get(CONF_SAFETY_HYSTERESIS, DEFAULT_SAFETY_HYSTERESIS),
+        pid_kp=config.get(CONF_PID_KP, DEFAULT_PID_KP),
+        pid_ki=config.get(CONF_PID_KI, DEFAULT_PID_KI),
+        pid_kd=config.get(CONF_PID_KD, DEFAULT_PID_KD),
+        floor_pid_kp=config.get(CONF_FLOOR_PID_KP, DEFAULT_FLOOR_PID_KP),
+        floor_pid_ki=config.get(CONF_FLOOR_PID_KI, DEFAULT_FLOOR_PID_KI),
+        floor_pid_kd=config.get(CONF_FLOOR_PID_KD, DEFAULT_FLOOR_PID_KD),
     )
-    min_cycle_duration: int = config.get(
-        CONF_MIN_CYCLE_DURATION, DEFAULT_MIN_CYCLE_DURATION
-    )
-    cycle_period: int = config.get(CONF_CYCLE_PERIOD, DEFAULT_CYCLE_PERIOD)
-    keep_alive: int | None = config.get(CONF_KEEP_ALIVE)
-    initial_hvac_mode: HVACMode | None = config.get(CONF_INITIAL_HVAC_MODE)
-    precision: float | None = config.get(CONF_PRECISION)
-    target_temperature_step: float | None = config.get(CONF_TEMP_STEP)
-    boost_mode: bool = config.get(CONF_BOOST_MODE, True)
-    boost_temp_diff: float = config.get(CONF_BOOST_TEMP_DIFF, DEFAULT_BOOST_TEMP_DIFF)
-    safety_hysteresis: float = config.get(
-        CONF_SAFETY_HYSTERESIS, DEFAULT_SAFETY_HYSTERESIS
-    )
-    pid_kp: float = config.get(CONF_PID_KP, DEFAULT_PID_KP)
-    pid_ki: float = config.get(CONF_PID_KI, DEFAULT_PID_KI)
-    pid_kd: float = config.get(CONF_PID_KD, DEFAULT_PID_KD)
-    floor_pid_kp: float = config.get(CONF_FLOOR_PID_KP, DEFAULT_FLOOR_PID_KP)
-    floor_pid_ki: float = config.get(CONF_FLOOR_PID_KI, DEFAULT_FLOOR_PID_KI)
-    floor_pid_kd: float = config.get(CONF_FLOOR_PID_KD, DEFAULT_FLOOR_PID_KD)
-    unit = hass.config.units.temperature_unit
-    unique_id = config_entry.entry_id
 
-    climate_entity = IRFloorHeatingClimate(
-        hass,
-        name=name,
-        heater_entity_id=heater_entity_id,
-        room_sensor_entity_id=room_sensor_entity_id,
-        floor_sensor_entity_id=floor_sensor_entity_id,
-        min_temp=min_temp,
-        max_temp=max_temp,
-        target_temp=target_temp,
-        max_floor_temp=max_floor_temp,
-        max_floor_temp_diff=max_floor_temp_diff,
-        min_cycle_duration=timedelta(seconds=min_cycle_duration),
-        cycle_period=timedelta(seconds=cycle_period),
-        keep_alive=timedelta(seconds=keep_alive) if keep_alive else None,
-        initial_hvac_mode=initial_hvac_mode,
-        precision=precision,
-        target_temperature_step=target_temperature_step,
-        unit=unit,
-        unique_id=unique_id,
-        boost_mode=boost_mode,
-        boost_temp_diff=boost_temp_diff,
-        safety_hysteresis=safety_hysteresis,
-        pid_kp=pid_kp,
-        pid_ki=pid_ki,
-        pid_kd=pid_kd,
-        floor_pid_kp=floor_pid_kp,
-        floor_pid_ki=floor_pid_ki,
-        floor_pid_kd=floor_pid_kd,
-    )
+    climate_entity = IRFloorHeatingClimate(climate_config)
 
     # Store climate entity in runtime_data for access by sensor platform
     config_entry.runtime_data = climate_entity
@@ -188,76 +201,48 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
     _attr_has_entity_name = True
     _enable_turn_on_off_backwards_compatibility = False
 
-    def __init__(  # noqa: PLR0913
-        self,
-        hass: HomeAssistant,
-        *,
-        name: str,
-        heater_entity_id: str,
-        room_sensor_entity_id: str,
-        floor_sensor_entity_id: str,
-        min_temp: float | None,
-        max_temp: float | None,
-        target_temp: float | None,
-        max_floor_temp: float,
-        max_floor_temp_diff: float,
-        min_cycle_duration: timedelta,
-        cycle_period: timedelta,
-        keep_alive: timedelta | None,
-        initial_hvac_mode: HVACMode | None,
-        precision: float | None,
-        target_temperature_step: float | None,
-        unit: UnitOfTemperature,
-        unique_id: str,
-        boost_mode: bool,
-        boost_temp_diff: float,
-        safety_hysteresis: float,
-        pid_kp: float,
-        pid_ki: float,
-        pid_kd: float,
-        floor_pid_kp: float,
-        floor_pid_ki: float,
-        floor_pid_kd: float,
-    ) -> None:
+    def __init__(self, config: ClimateConfig) -> None:
         """Initialize the IR floor heating climate device."""
-        self.hass = hass
-        self.heater_entity_id = heater_entity_id
-        self.room_sensor_entity_id = room_sensor_entity_id
-        self.floor_sensor_entity_id = floor_sensor_entity_id
+        self.hass = config.hass
+        self.heater_entity_id = config.heater_entity_id
+        self.room_sensor_entity_id = config.room_sensor_entity_id
+        self.floor_sensor_entity_id = config.floor_sensor_entity_id
 
         # Set up device info from heater entity
-        if device_entry := async_entity_id_to_device(hass, heater_entity_id):
+        if device_entry := async_entity_id_to_device(
+            config.hass, config.heater_entity_id
+        ):
             self._attr_device_info = DeviceInfo(
                 identifiers=device_entry.identifiers,
                 connections=device_entry.connections,
             )
 
         # Temperature limits
-        self._min_temp = min_temp
-        self._max_temp = max_temp
-        self._max_floor_temp = max_floor_temp
-        self._max_floor_temp_diff = max_floor_temp_diff
+        self._min_temp = config.min_temp
+        self._max_temp = config.max_temp
+        self._max_floor_temp = config.max_floor_temp
+        self._max_floor_temp_diff = config.max_floor_temp_diff
 
         # Control parameters
-        self.min_cycle_duration = min_cycle_duration
-        self.cycle_period = cycle_period
-        self._keep_alive = keep_alive
-        self._boost_mode = boost_mode
-        self._boost_temp_diff = boost_temp_diff
-        self._safety_hysteresis = safety_hysteresis
+        self.min_cycle_duration = config.min_cycle_duration
+        self.cycle_period = config.cycle_period
+        self._keep_alive = config.keep_alive
+        self._boost_mode = config.boost_mode
+        self._boost_temp_diff = config.boost_temp_diff
+        self._safety_hysteresis = config.safety_hysteresis
 
         # State variables
-        self._hvac_mode = initial_hvac_mode
-        self._target_temp = target_temp
-        self._temp_precision = precision
-        self._temp_target_temperature_step = target_temperature_step
+        self._hvac_mode = config.initial_hvac_mode
+        self._target_temp = config.target_temp
+        self._temp_precision = config.precision
+        self._temp_target_temperature_step = config.target_temperature_step
         self._attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF]
         self._active = False
         self._room_temp: float | None = None
         self._floor_temp: float | None = None
         self._temp_lock = asyncio.Lock()
-        self._attr_temperature_unit = unit
-        self._attr_unique_id = unique_id
+        self._attr_temperature_unit = config.unit
+        self._attr_unique_id = config.unique_id
         self._attr_supported_features = (
             ClimateEntityFeature.TARGET_TEMPERATURE
             | ClimateEntityFeature.TURN_OFF
@@ -275,20 +260,20 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
         # PID Controllers (Dual-PID Min-Selector Architecture)
         self._room_pid = PIDController(
-            kp=pid_kp,
-            ki=pid_ki,
-            kd=pid_kd,
+            kp=config.pid_kp,
+            ki=config.pid_ki,
+            kd=config.pid_kd,
             name="Room Temperature",
         )
         self._floor_pid = PIDController(
-            kp=floor_pid_kp,
-            ki=floor_pid_ki,
-            kd=floor_pid_kd,
+            kp=config.floor_pid_kp,
+            ki=config.floor_pid_ki,
+            kd=config.floor_pid_kd,
             name="Floor Limiter",
         )
         self._tpi_controller = TPIController(
-            cycle_period=cycle_period,
-            min_cycle_duration=min_cycle_duration,
+            cycle_period=config.cycle_period,
+            min_cycle_duration=config.min_cycle_duration,
         )
 
         # PID demand values
@@ -301,18 +286,18 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             "Max floor temp: %.1f°C, Max diff: %.1f°C, Cycle period: %ds, "
             "Room PID (Kp=%.1f, Ki=%.1f, Kd=%.1f), "
             "Floor PID (Kp=%.1f, Ki=%.1f, Kd=%.1f)",
-            name,
-            room_sensor_entity_id,
-            floor_sensor_entity_id,
-            max_floor_temp,
-            max_floor_temp_diff,
-            cycle_period.total_seconds(),
-            pid_kp,
-            pid_ki,
-            pid_kd,
-            floor_pid_kp,
-            floor_pid_ki,
-            floor_pid_kd,
+            config.name,
+            config.room_sensor_entity_id,
+            config.floor_sensor_entity_id,
+            config.max_floor_temp,
+            config.max_floor_temp_diff,
+            config.cycle_period.total_seconds(),
+            config.pid_kp,
+            config.pid_ki,
+            config.pid_kd,
+            config.floor_pid_kp,
+            config.floor_pid_ki,
+            config.floor_pid_kd,
         )
 
     async def async_added_to_hass(self) -> None:
@@ -402,6 +387,12 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                     self._target_temp = float(old_state.attributes[ATTR_TEMPERATURE])
             if not self._hvac_mode and old_state.state:
                 self._hvac_mode = HVACMode(old_state.state)
+
+            # Restore relay toggle count
+            if (
+                toggle_count := old_state.attributes.get("relay_toggle_count")
+            ) is not None:
+                self._relay_toggle_count = int(toggle_count)
         else:
             if self._target_temp is None:
                 self._target_temp = self.min_temp
@@ -477,6 +468,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             "room_pid_demand": round(self._room_demand_percent, 1),
             "floor_pid_demand": round(self._floor_demand_percent, 1),
             "safety_veto_active": self._safety_veto_active,
+            "relay_toggle_count": self._relay_toggle_count,
         }
 
         if self._room_temp is not None:
