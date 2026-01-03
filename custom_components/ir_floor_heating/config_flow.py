@@ -25,6 +25,9 @@ from .const import (
     CONF_BOOST_MODE,
     CONF_BOOST_TEMP_DIFF,
     CONF_CYCLE_PERIOD,
+    CONF_FLOOR_PID_KD,
+    CONF_FLOOR_PID_KI,
+    CONF_FLOOR_PID_KP,
     CONF_FLOOR_SENSOR,
     CONF_HEATER,
     CONF_INITIAL_HVAC_MODE,
@@ -44,6 +47,9 @@ from .const import (
     CONF_TEMP_STEP,
     DEFAULT_BOOST_TEMP_DIFF,
     DEFAULT_CYCLE_PERIOD,
+    DEFAULT_FLOOR_PID_KD,
+    DEFAULT_FLOOR_PID_KI,
+    DEFAULT_FLOOR_PID_KP,
     DEFAULT_MAX_FLOOR_TEMP,
     DEFAULT_MAX_FLOOR_TEMP_DIFF,
     DEFAULT_MIN_CYCLE_DURATION,
@@ -232,6 +238,36 @@ OPTIONS_SCHEMA = vol.Schema(
             )
         ),
         vol.Optional(CONF_PID_KD, default=DEFAULT_PID_KD): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0.0,
+                max=20.0,
+                step=0.1,
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(
+            CONF_FLOOR_PID_KP, default=DEFAULT_FLOOR_PID_KP
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0.1,
+                max=50.0,
+                step=0.1,
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(
+            CONF_FLOOR_PID_KI, default=DEFAULT_FLOOR_PID_KI
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0.0,
+                max=10.0,
+                step=0.1,
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(
+            CONF_FLOOR_PID_KD, default=DEFAULT_FLOOR_PID_KD
+        ): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0.0,
                 max=20.0,

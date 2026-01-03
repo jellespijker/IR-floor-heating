@@ -25,6 +25,9 @@ CONF_BOOST_TEMP_DIFF = "boost_temp_diff"
 CONF_PID_KP = "pid_kp"
 CONF_PID_KI = "pid_ki"
 CONF_PID_KD = "pid_kd"
+CONF_FLOOR_PID_KP = "floor_pid_kp"
+CONF_FLOOR_PID_KI = "floor_pid_ki"
+CONF_FLOOR_PID_KD = "floor_pid_kd"
 CONF_SAFETY_HYSTERESIS = "safety_hysteresis"
 
 # Default values
@@ -44,3 +47,7 @@ DEFAULT_SAFETY_HYSTERESIS = (
 DEFAULT_PID_KP = 80.0  # Proportional gain
 DEFAULT_PID_KI = 2.0  # Integral gain
 DEFAULT_PID_KD = 15.0  # Derivative gain
+# Floor Limiter PID tuning defaults (dual-PID architecture)
+DEFAULT_FLOOR_PID_KP = 20.0  # Floor limiter proportional gain
+DEFAULT_FLOOR_PID_KI = 0.5  # Floor limiter integral gain
+DEFAULT_FLOOR_PID_KD = 10.0  # Floor limiter derivative gain

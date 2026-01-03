@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.climate import ClimateEntity
@@ -52,6 +53,9 @@ from .const import (
     CONF_BOOST_MODE,
     CONF_BOOST_TEMP_DIFF,
     CONF_CYCLE_PERIOD,
+    CONF_FLOOR_PID_KD,
+    CONF_FLOOR_PID_KI,
+    CONF_FLOOR_PID_KP,
     CONF_FLOOR_SENSOR,
     CONF_HEATER,
     CONF_INITIAL_HVAC_MODE,
@@ -71,6 +75,9 @@ from .const import (
     CONF_TEMP_STEP,
     DEFAULT_BOOST_TEMP_DIFF,
     DEFAULT_CYCLE_PERIOD,
+    DEFAULT_FLOOR_PID_KD,
+    DEFAULT_FLOOR_PID_KI,
+    DEFAULT_FLOOR_PID_KP,
     DEFAULT_MAX_FLOOR_TEMP,
     DEFAULT_MAX_FLOOR_TEMP_DIFF,
     DEFAULT_MIN_CYCLE_DURATION,
@@ -125,6 +132,9 @@ async def async_setup_entry(
     pid_kp: float = config.get(CONF_PID_KP, DEFAULT_PID_KP)
     pid_ki: float = config.get(CONF_PID_KI, DEFAULT_PID_KI)
     pid_kd: float = config.get(CONF_PID_KD, DEFAULT_PID_KD)
+    floor_pid_kp: float = config.get(CONF_FLOOR_PID_KP, DEFAULT_FLOOR_PID_KP)
+    floor_pid_ki: float = config.get(CONF_FLOOR_PID_KI, DEFAULT_FLOOR_PID_KI)
+    floor_pid_kd: float = config.get(CONF_FLOOR_PID_KD, DEFAULT_FLOOR_PID_KD)
     unit = hass.config.units.temperature_unit
     unique_id = config_entry.entry_id
 
@@ -153,6 +163,9 @@ async def async_setup_entry(
         pid_kp=pid_kp,
         pid_ki=pid_ki,
         pid_kd=pid_kd,
+        floor_pid_kp=floor_pid_kp,
+        floor_pid_ki=floor_pid_ki,
+        floor_pid_kd=floor_pid_kd,
     )
 
     # Store climate entity for access by sensor platform
@@ -199,6 +212,9 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         pid_kp: float,
         pid_ki: float,
         pid_kd: float,
+        floor_pid_kp: float,
+        floor_pid_ki: float,
+        floor_pid_kd: float,
     ) -> None:
         """Initialize the IR floor heating climate device."""
         self._attr_name = name
@@ -258,7 +274,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         _LOGGER.info(
             "IR Floor Heating initialized: '%s' - Room sensor: %s, Floor sensor: %s, "
             "Max floor temp: %.1f°C, Max diff: %.1f°C, Cycle period: %ds, "
-            "PID (Kp=%.1f, Ki=%.1f, Kd=%.1f)",
+            "Room PID (Kp=%.1f, Ki=%.1f, Kd=%.1f), "
+            "Floor PID (Kp=%.1f, Ki=%.1f, Kd=%.1f)",
             name,
             room_sensor_entity_id,
             floor_sensor_entity_id,
@@ -268,6 +285,9 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             pid_kp,
             pid_ki,
             pid_kd,
+            floor_pid_kp,
+            floor_pid_ki,
+            floor_pid_kd,
         )
 
     async def async_added_to_hass(self) -> None:
