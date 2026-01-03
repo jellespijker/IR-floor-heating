@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from datetime import UTC, datetime, timedelta
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -88,6 +87,8 @@ from .const import (
     DEFAULT_SAFETY_HYSTERESIS,
     DOMAIN,
 )
+from .pid import PIDController
+from .tpi import TPIController
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -260,16 +261,28 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self._demand_percent: float = 0.0
         self._safety_veto_active: bool = False
 
-        # PID state
-        self._integral_error: float = 0.0
-        self._last_error: float = 0.0
-        self._last_room_temp: float | None = None
-        self._last_logged_demand: float = 0.0
+        # PID Controllers (Dual-PID Min-Selector Architecture)
+        self._room_pid = PIDController(
+            kp=pid_kp,
+            ki=pid_ki,
+            kd=pid_kd,
+            name="Room Temperature",
+        )
+        self._floor_pid = PIDController(
+            kp=floor_pid_kp,
+            ki=floor_pid_ki,
+            kd=floor_pid_kd,
+            name="Floor Limiter",
+        )
+        self._tpi_controller = TPIController(
+            cycle_period=cycle_period,
+            min_cycle_duration=min_cycle_duration,
+        )
 
-        # PID tuning constants (configurable)
-        self._kp: float = pid_kp
-        self._ki: float = pid_ki
-        self._kd: float = pid_kd
+        # PID demand values
+        self._room_demand_percent: float = 0.0
+        self._floor_demand_percent: float = 0.0
+        self._final_demand_percent: float = 0.0
 
         _LOGGER.info(
             "IR Floor Heating initialized: '%s' - Room sensor: %s, Floor sensor: %s, "
@@ -692,72 +705,19 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
         return False
 
-    def _calculate_pid_demand(self) -> float:
-        """Calculate heating demand using PID control."""
-        if self._room_temp is None or self._target_temp is None:
-            _LOGGER.debug("PID calculation skipped: Missing temperature data")
-            return 0.0
-
-        # Calculate error
-        error = self._target_temp - self._room_temp
-
-        # Proportional term
-        p_term = self._kp * error
-
-        # Integral term (only accumulate if not vetoed to prevent windup)
-        if not self._safety_veto_active:
-            self._integral_error += error
-            # Clamp integral to prevent excessive windup
-            max_integral = 100.0 / self._ki if self._ki > 0 else 0
-            # Clamp lower bound to 0.0 to prevent negative "cooling" debt
-            self._integral_error = max(0.0, min(max_integral, self._integral_error))
-        i_term = self._ki * self._integral_error
-
-        # Derivative term
-        d_term = 0.0
-        if self._last_room_temp is not None:
-            temp_change = self._room_temp - self._last_room_temp
-            d_term = (
-                -self._kd * temp_change
-            )  # Negative because we want to dampen rate of change
-
-        # Calculate total demand
-        demand = p_term + i_term + d_term
-
-        # Constrain to 0-100%
-        demand = max(0.0, min(100.0, demand))
-
-        self._last_error = error
-
-        # Only log if demand changed significantly or periodically
-        demand_change_threshold = 5.0
-        if abs(demand - self._last_logged_demand) > demand_change_threshold:
-            _LOGGER.debug(
-                "PID demand: %.1f%% (error=%.2f°C, P=%.1f, I=%.1f, D=%.1f)",
-                demand,
-                error,
-                p_term,
-                i_term,
-                d_term,
-            )
-            self._last_logged_demand = demand
-
-        return demand
-
     async def _async_control_heating(
         self, _time: datetime | None = None, *, force: bool = False
     ) -> None:
-        """Control heating using TPI algorithm with safety veto architecture."""
+        """Control heating using dual-PID min-selector with TPI actuation."""
         async with self._temp_lock:
-            # Activate control once we have both temperatures
+            # Activate control once we have all required temperatures
             if not self._active and None not in (
                 self._room_temp,
                 self._floor_temp,
                 self._target_temp,
             ):
                 self._active = True
-                # Reset cycle to start fresh when heating becomes active
-                self._cycle_start_time = None
+                self._tpi_controller.reset_cycle()
                 _LOGGER.info(
                     "IR floor heating active. Room: %.1f°C, Floor: %.1f°C, "
                     "Target: %.1f°C",
@@ -769,71 +729,84 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             if not self._active or self._hvac_mode == HVACMode.OFF:
                 return
 
-            # Check safety veto (bypass hysteresis on forced updates like setpoint
-            # changes)
+            # Check safety veto (bypass hysteresis on forced updates)
             self._safety_veto_active = self._check_safety_veto(bypass_hysteresis=force)
 
             if self._safety_veto_active:
-                self._demand_percent = 0.0
+                self._room_demand_percent = 0.0
+                self._floor_demand_percent = 0.0
+                self._final_demand_percent = 0.0
+                _LOGGER.debug("Safety veto active - demand set to 0%%")
             else:
-                # Calculate PID demand
-                self._demand_percent = self._calculate_pid_demand()
+                # Calculate Room PID demand
+                if self._room_temp is not None and self._target_temp is not None:
+                    self._room_demand_percent = self._room_pid.calculate(
+                        setpoint=self._target_temp,
+                        process_variable=self._room_temp,
+                    )
+                else:
+                    self._room_demand_percent = 0.0
+
+                # Calculate Floor Limiter PID demand
+                # Target is the effective floor limit,
+                # process variable is current floor temp
+                if self._floor_temp is not None:
+                    effective_limit = self._calculate_effective_floor_limit()
+                    self._floor_demand_percent = self._floor_pid.calculate(
+                        setpoint=effective_limit,
+                        process_variable=self._floor_temp,
+                    )
+                else:
+                    self._floor_demand_percent = 0.0
+
+                # Min-Selector: take the lower demand (the limiting one)
+                self._final_demand_percent = min(
+                    self._room_demand_percent, self._floor_demand_percent
+                )
+
+                # Anti-Windup Coordination:
+                # If floor limit is restricting us, pause room PID integration
+                if self._final_demand_percent < self._room_demand_percent:
+                    self._room_pid.pause_integration()
+                    _LOGGER.debug(
+                        "Room PID restricted by floor limit: "
+                        "room_demand=%.1f%%, floor_demand=%.1f%%, final=%.1f%%",
+                        self._room_demand_percent,
+                        self._floor_demand_percent,
+                        self._final_demand_percent,
+                    )
+
+            self._demand_percent = self._final_demand_percent
 
             # Force immediate update if requested
             if force:
-                self._cycle_start_time = None
+                self._tpi_controller.reset_cycle()
 
     async def _async_tpi_cycle(self, _time: datetime | None = None) -> None:
         """Execute Time Proportional & Integral (TPI) control cycle."""
         if not self._active or self._hvac_mode == HVACMode.OFF:
             return
 
-        current_time = datetime.now(UTC)
-
-        # Initialize cycle start time
-        if self._cycle_start_time is None:
-            self._cycle_start_time = current_time
-
-        # Calculate time within current cycle
-        time_in_cycle = (current_time - self._cycle_start_time).total_seconds()
-
-        # Start new cycle if period elapsed
-        if time_in_cycle >= self.cycle_period.total_seconds():
-            self._cycle_start_time = current_time
-            time_in_cycle = 0.0
-
-        # Calculate ON duration for this cycle based on demand
-        on_duration_seconds = (
-            self._demand_percent / 100.0
-        ) * self.cycle_period.total_seconds()
-
-        # Apply minimum cycle duration constraints (relay protection)
-        min_duration = self.min_cycle_duration.total_seconds()
-        if on_duration_seconds < min_duration:
-            on_duration_seconds = 0.0  # Too short, stay OFF
-        elif on_duration_seconds > (self.cycle_period.total_seconds() - min_duration):
-            on_duration_seconds = (
-                self.cycle_period.total_seconds()
-            )  # Stay ON full cycle
-
-        # Determine relay state for current position in cycle
-        should_be_on = time_in_cycle < on_duration_seconds
+        # Get relay state from TPI controller
+        should_be_on = self._tpi_controller.get_relay_state(self._final_demand_percent)
 
         # Actuate relay if state should change
         if should_be_on and not self._is_device_active:
+            cycle_info = self._tpi_controller.get_cycle_info()
             _LOGGER.info(
                 "Heater ON (demand %.0f%%, cycle %.0f/%.0fs)",
-                self._demand_percent,
-                time_in_cycle,
-                self.cycle_period.total_seconds(),
+                self._final_demand_percent,
+                cycle_info["time_in_cycle"],
+                cycle_info["cycle_period"],
             )
             await self._async_heater_turn_on()
         elif not should_be_on and self._is_device_active:
+            cycle_info = self._tpi_controller.get_cycle_info()
             _LOGGER.info(
                 "Heater OFF (demand %.0f%%, cycle %.0f/%.0fs)",
-                self._demand_percent,
-                time_in_cycle,
-                self.cycle_period.total_seconds(),
+                self._final_demand_percent,
+                cycle_info["time_in_cycle"],
+                cycle_info["cycle_period"],
             )
             await self._async_heater_turn_off()
 
