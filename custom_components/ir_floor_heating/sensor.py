@@ -213,4 +213,3 @@ class IRFloorHeatingFloorIntegralErrorSensor(IRFloorHeatingBaseSensor):
     def native_value(self) -> float | None:
         """Return the floor PID integral error value."""
         return self._climate_entity.floor_integral_error
-

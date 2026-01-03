@@ -264,14 +264,10 @@ class TestDualPIDMinSelector(unittest.TestCase):
     def test_controller_independence(self) -> None:
         """Test that controllers operate independently."""
         # Room PID state should not affect floor PID
-        self.room_pid.calculate(
-            setpoint=22.0, process_variable=20.0, dt=1.0
-        )
+        self.room_pid.calculate(setpoint=22.0, process_variable=20.0, dt=1.0)
 
         # Floor PID independent calculation
-        self.floor_pid.calculate(
-            setpoint=27.0, process_variable=25.0, dt=1.0
-        )
+        self.floor_pid.calculate(setpoint=27.0, process_variable=25.0, dt=1.0)
 
         # Each should have independent integral state
         self.room_pid.get_integral_error()
@@ -281,12 +277,8 @@ class TestDualPIDMinSelector(unittest.TestCase):
         # error1 (room): 22-20=2, integral = 2*1 = 2
         # error2 (floor): 27-25=2, integral = 2*1 = 2 (same by coincidence with same error)
         # Test with different setpoints to ensure independence
-        self.room_pid.calculate(
-            setpoint=23.0, process_variable=20.0, dt=1.0
-        )
-        self.floor_pid.calculate(
-            setpoint=26.0, process_variable=25.0, dt=1.0
-        )
+        self.room_pid.calculate(setpoint=23.0, process_variable=20.0, dt=1.0)
+        self.floor_pid.calculate(setpoint=26.0, process_variable=25.0, dt=1.0)
 
         room_integral2 = self.room_pid.get_integral_error()
         floor_integral2 = self.floor_pid.get_integral_error()
@@ -308,12 +300,8 @@ class TestDualPIDMinSelector(unittest.TestCase):
         setpoint = 27.0
         pv = 26.0
 
-        conservative_floor_pid.calculate(
-            setpoint=setpoint, process_variable=pv, dt=1.0
-        )
-        aggressive_floor_pid.calculate(
-            setpoint=setpoint, process_variable=pv, dt=1.0
-        )
+        conservative_floor_pid.calculate(setpoint=setpoint, process_variable=pv, dt=1.0)
+        aggressive_floor_pid.calculate(setpoint=setpoint, process_variable=pv, dt=1.0)
 
         # Conservative: P=10*(27-26)=10, I≈0.1, D≈-5 = ~5
         # Aggressive: P=50*(27-26)=50, I≈1, D≈-20 = ~31 (but clamped)
