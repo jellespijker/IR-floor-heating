@@ -102,6 +102,18 @@
       },
       "integral_error": {
         "name": "PID integral error"
+      },
+      "room_pid_demand": {
+        "name": "Room PID demand"
+      },
+      "floor_pid_demand": {
+        "name": "Floor PID demand"
+      },
+      "room_integral_error": {
+        "name": "Room integral error"
+      },
+      "floor_integral_error": {
+        "name": "Floor integral error"
       }
     }
   }

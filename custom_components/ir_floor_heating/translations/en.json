@@ -55,8 +55,20 @@
             "effective_floor_limit": {
                 "name": "Effective floor limit"
             },
+            "floor_integral_error": {
+                "name": "Floor integral error"
+            },
+            "floor_pid_demand": {
+                "name": "Floor PID demand"
+            },
             "integral_error": {
                 "name": "PID integral error"
+            },
+            "room_integral_error": {
+                "name": "Room integral error"
+            },
+            "room_pid_demand": {
+                "name": "Room PID demand"
             },
             "safety_veto_active": {
                 "name": "Safety veto"
