@@ -44,6 +44,10 @@ async def async_setup_entry(
             IRFloorHeatingEffectiveLimitSensor(climate_entity, config_entry),
             IRFloorHeatingSafetyVetoSensor(climate_entity, config_entry),
             IRFloorHeatingIntegralErrorSensor(climate_entity, config_entry),
+            IRFloorHeatingRoomPIDDemandSensor(climate_entity, config_entry),
+            IRFloorHeatingFloorPIDDemandSensor(climate_entity, config_entry),
+            IRFloorHeatingRoomIntegralErrorSensor(climate_entity, config_entry),
+            IRFloorHeatingFloorIntegralErrorSensor(climate_entity, config_entry),
         ]
     )
 
@@ -149,3 +153,59 @@ class IRFloorHeatingIntegralErrorSensor(IRFloorHeatingBaseSensor):
     def native_value(self) -> float | None:
         """Return the integral error value."""
         return self._climate_entity.integral_error
+
+
+class IRFloorHeatingRoomPIDDemandSensor(IRFloorHeatingBaseSensor):
+    """Sensor for room temperature PID demand percentage."""
+
+    _attr_translation_key = "room_pid_demand"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the room PID demand percentage."""
+        return self._climate_entity.room_pid_demand_percent
+
+
+class IRFloorHeatingFloorPIDDemandSensor(IRFloorHeatingBaseSensor):
+    """Sensor for floor limit PID demand percentage."""
+
+    _attr_translation_key = "floor_pid_demand"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the floor PID demand percentage."""
+        return self._climate_entity.floor_pid_demand_percent
+
+
+class IRFloorHeatingRoomIntegralErrorSensor(IRFloorHeatingBaseSensor):
+    """Sensor for room PID integral error term."""
+
+    _attr_translation_key = "room_integral_error"
+    _attr_native_unit_of_measurement = "°C·s"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the room PID integral error value."""
+        return self._climate_entity.room_integral_error
+
+
+class IRFloorHeatingFloorIntegralErrorSensor(IRFloorHeatingBaseSensor):
+    """Sensor for floor PID integral error term."""
+
+    _attr_translation_key = "floor_integral_error"
+    _attr_native_unit_of_measurement = "°C·s"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the floor PID integral error value."""
+        return self._climate_entity.floor_integral_error

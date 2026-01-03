@@ -458,7 +458,9 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             "room_temperature": self._room_temp,
             "max_floor_temp": self._max_floor_temp,
             "max_floor_temp_diff": self._max_floor_temp_diff,
-            "demand_percent": round(self._demand_percent, 1),
+            "demand_percent": round(self._final_demand_percent, 1),
+            "room_pid_demand": round(self._room_demand_percent, 1),
+            "floor_pid_demand": round(self._floor_demand_percent, 1),
             "safety_veto_active": self._safety_veto_active,
         }
 
@@ -470,8 +472,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
     @property
     def demand_percent(self) -> float:
-        """Return the current heating demand percentage."""
-        return round(self._demand_percent, 1)
+        """Return the current final heating demand percentage (min-selector result)."""
+        return round(self._final_demand_percent, 1)
 
     @property
     def effective_floor_limit(self) -> float | None:
@@ -487,8 +489,32 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
     @property
     def integral_error(self) -> float:
-        """Return the PID integral error term."""
-        return round(self._integral_error, 1)
+        """
+        Return the room PID integral error term.
+
+        Deprecated, use room_integral_error instead.
+        """
+        return round(self._room_pid.get_integral_error(), 1)
+
+    @property
+    def room_pid_demand_percent(self) -> float:
+        """Return the room temperature PID demand percentage."""
+        return round(self._room_demand_percent, 1)
+
+    @property
+    def floor_pid_demand_percent(self) -> float:
+        """Return the floor limit PID demand percentage."""
+        return round(self._floor_demand_percent, 1)
+
+    @property
+    def room_integral_error(self) -> float:
+        """Return the room PID integral error term."""
+        return round(self._room_pid.get_integral_error(), 1)
+
+    @property
+    def floor_integral_error(self) -> float:
+        """Return the floor PID integral error term."""
+        return round(self._floor_pid.get_integral_error(), 1)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set hvac mode."""
