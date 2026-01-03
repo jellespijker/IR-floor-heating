@@ -45,6 +45,7 @@ async def async_setup_entry(
             IRFloorHeatingFloorPIDDemandSensor(climate_entity, config_entry),
             IRFloorHeatingRoomIntegralErrorSensor(climate_entity, config_entry),
             IRFloorHeatingFloorIntegralErrorSensor(climate_entity, config_entry),
+            IRFloorHeatingRelayToggleCountSensor(climate_entity, config_entry),
         ]
     )
 
@@ -68,7 +69,6 @@ class IRFloorHeatingBaseSensor(SensorEntity):
         device_info = getattr(climate_entity, "_attr_device_info", None)
         if device_info is not None:
             self._attr_device_info = device_info
-        # Use climate entity's unique_id as base for shorter, consistent IDs
         # Use climate entity's unique_id as base for shorter, consistent IDs
         self._attr_unique_id = (
             f"{climate_entity.unique_id}_{self._attr_translation_key}"
@@ -213,3 +213,19 @@ class IRFloorHeatingFloorIntegralErrorSensor(IRFloorHeatingBaseSensor):
     def native_value(self) -> float | None:
         """Return the floor PID integral error value."""
         return self._climate_entity.floor_integral_error
+
+
+class IRFloorHeatingRelayToggleCountSensor(IRFloorHeatingBaseSensor):
+    """Sensor for relay toggle count (cumulative since tracking started)."""
+
+    _attr_translation_key = "relay_toggle_count"
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 0
+    # Enable by default since relay wear tracking is useful for maintenance
+    _attr_entity_registry_enabled_default = True
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the total relay toggle count."""
+        return self._climate_entity.relay_toggle_count

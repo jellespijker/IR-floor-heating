@@ -114,6 +114,9 @@
       },
       "floor_integral_error": {
         "name": "Floor integral error"
+      },
+      "relay_toggle_count": {
+        "name": "Relay toggle count"
       }
     }
   }

@@ -220,7 +220,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         floor_pid_kd: float,
     ) -> None:
         """Initialize the IR floor heating climate device."""
-        self._attr_name = name
+        self.hass = hass
         self.heater_entity_id = heater_entity_id
         self.room_sensor_entity_id = room_sensor_entity_id
         self.floor_sensor_entity_id = floor_sensor_entity_id
@@ -268,6 +268,10 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self._cycle_start_time: datetime | None = None
         self._demand_percent: float = 0.0
         self._safety_veto_active: bool = False
+        self._last_relay_state: bool = False
+
+        # Relay toggle counter (restored from previous state via RestoreEntity)
+        self._relay_toggle_count: int = 0
 
         # PID Controllers (Dual-PID Min-Selector Architecture)
         self._room_pid = PIDController(
@@ -513,6 +517,11 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
     def floor_pid_demand_percent(self) -> float:
         """Return the floor limit PID demand percentage."""
         return round(self._floor_demand_percent, 1)
+
+    @property
+    def relay_toggle_count(self) -> int:
+        """Return the total number of relay toggles since tracking started."""
+        return self._relay_toggle_count
 
     @property
     def room_integral_error(self) -> float:
@@ -859,6 +868,9 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
     async def _async_heater_turn_on(self) -> None:
         """Turn heater toggleable device on."""
+        if not self._last_relay_state:
+            self._last_relay_state = True
+            self._relay_toggle_count += 1
         _LOGGER.debug("Turning on heater %s", self.heater_entity_id)
         await self.hass.services.async_call(
             HOMEASSISTANT_DOMAIN,
@@ -869,6 +881,9 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
     async def _async_heater_turn_off(self) -> None:
         """Turn heater toggleable device off."""
+        if self._last_relay_state:
+            self._last_relay_state = False
+            self._relay_toggle_count += 1
         _LOGGER.debug("Turning off heater %s", self.heater_entity_id)
         await self.hass.services.async_call(
             HOMEASSISTANT_DOMAIN,
