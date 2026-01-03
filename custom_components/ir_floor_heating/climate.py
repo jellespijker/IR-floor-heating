@@ -105,28 +105,20 @@ async def async_setup_entry(
     min_temp: float | None = config.get(CONF_MIN_TEMP)
     max_temp: float | None = config.get(CONF_MAX_TEMP)
     target_temp: float | None = config.get(CONF_TARGET_TEMP)
-    max_floor_temp: float = config.get(
-        CONF_MAX_FLOOR_TEMP, DEFAULT_MAX_FLOOR_TEMP
-    )
+    max_floor_temp: float = config.get(CONF_MAX_FLOOR_TEMP, DEFAULT_MAX_FLOOR_TEMP)
     max_floor_temp_diff: float = config.get(
         CONF_MAX_FLOOR_TEMP_DIFF, DEFAULT_MAX_FLOOR_TEMP_DIFF
     )
     min_cycle_duration: int = config.get(
         CONF_MIN_CYCLE_DURATION, DEFAULT_MIN_CYCLE_DURATION
     )
-    cycle_period: int = config.get(
-        CONF_CYCLE_PERIOD, DEFAULT_CYCLE_PERIOD
-    )
+    cycle_period: int = config.get(CONF_CYCLE_PERIOD, DEFAULT_CYCLE_PERIOD)
     keep_alive: int | None = config.get(CONF_KEEP_ALIVE)
-    initial_hvac_mode: HVACMode | None = config.get(
-        CONF_INITIAL_HVAC_MODE
-    )
+    initial_hvac_mode: HVACMode | None = config.get(CONF_INITIAL_HVAC_MODE)
     precision: float | None = config.get(CONF_PRECISION)
     target_temperature_step: float | None = config.get(CONF_TEMP_STEP)
     boost_mode: bool = config.get(CONF_BOOST_MODE, True)
-    boost_temp_diff: float = config.get(
-        CONF_BOOST_TEMP_DIFF, DEFAULT_BOOST_TEMP_DIFF
-    )
+    boost_temp_diff: float = config.get(CONF_BOOST_TEMP_DIFF, DEFAULT_BOOST_TEMP_DIFF)
     safety_hysteresis: float = config.get(
         CONF_SAFETY_HYSTERESIS, DEFAULT_SAFETY_HYSTERESIS
     )

@@ -42,5 +42,5 @@ DEFAULT_SAFETY_HYSTERESIS = (
 )
 # PID tuning defaults (optimized for floor heating)
 DEFAULT_PID_KP = 40.0  # Proportional gain
-DEFAULT_PID_KI = 1.0 # Integral gain
+DEFAULT_PID_KI = 1.0  # Integral gain
 DEFAULT_PID_KD = 30.0  # Derivative gain
