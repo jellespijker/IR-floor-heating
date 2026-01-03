@@ -63,12 +63,15 @@ class IRFloorHeatingBaseSensor(SensorEntity):
     def __init__(
         self,
         climate_entity: IRFloorHeatingClimate,
-        config_entry: ConfigEntry,
+        _config_entry: ConfigEntry,
     ) -> None:
         """Initialize the sensor."""
         self._climate_entity = climate_entity
         self._attr_device_info = climate_entity.device_info
-        self._attr_unique_id = f"{config_entry.entry_id}_{self._attr_translation_key}"
+        # Use climate entity's unique_id as base for shorter, consistent IDs
+        self._attr_unique_id = (
+            f"{climate_entity.unique_id}_{self._attr_translation_key}"
+        )
         self._last_reported_value: Any = None
 
     async def async_added_to_hass(self) -> None:
