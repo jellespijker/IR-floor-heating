@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .const import DOMAIN, PLATFORMS
+from .const import DOMAIN as DOMAIN
+from .const import PLATFORMS
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry

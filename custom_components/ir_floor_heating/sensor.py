@@ -28,7 +28,7 @@ PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
+    _hass: HomeAssistant,
     config_entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
@@ -60,13 +60,15 @@ class IRFloorHeatingBaseSensor(SensorEntity):
     def __init__(
         self,
         climate_entity: IRFloorHeatingClimate,
-        config_entry: ConfigEntry,
+        _config_entry: ConfigEntry,
     ) -> None:
         """Initialize the sensor."""
         self._climate_entity = climate_entity
         # Inherit device info from climate entity
-        if hasattr(climate_entity, "_attr_device_info"):
-            self._attr_device_info = climate_entity._attr_device_info
+        device_info = getattr(climate_entity, "_attr_device_info", None)
+        if device_info is not None:
+            self._attr_device_info = device_info
+        # Use climate entity's unique_id as base for shorter, consistent IDs
         # Use climate entity's unique_id as base for shorter, consistent IDs
         self._attr_unique_id = (
             f"{climate_entity.unique_id}_{self._attr_translation_key}"
