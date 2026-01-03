@@ -64,6 +64,9 @@
             "integral_error": {
                 "name": "PID integral error"
             },
+            "relay_toggle_count": {
+                "name": "Relay toggle count"
+            },
             "room_integral_error": {
                 "name": "Room integral error"
             },
