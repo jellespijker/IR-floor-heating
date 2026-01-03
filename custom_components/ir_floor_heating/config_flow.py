@@ -8,7 +8,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 import voluptuous as vol
-from homeassistant.components.climate.const import HVACMode
+from homeassistant.components.climate.const import (
+    DEFAULT_MAX_TEMP,
+    DEFAULT_MIN_TEMP,
+    HVACMode,
+)
 from homeassistant.const import (
     CONF_NAME,
     PRECISION_HALVES,
@@ -93,8 +97,8 @@ OPTIONS_SCHEMA = vol.Schema(
             CONF_MAX_FLOOR_TEMP, default=DEFAULT_MAX_FLOOR_TEMP
         ): selector.NumberSelector(
             selector.NumberSelectorConfig(
-                min=20.0,
-                max=35.0,
+                min=DEFAULT_MIN_TEMP,
+                max=DEFAULT_MAX_TEMP,
                 step=0.5,
                 unit_of_measurement="°C",
                 mode=selector.NumberSelectorMode.BOX,
@@ -113,8 +117,8 @@ OPTIONS_SCHEMA = vol.Schema(
         ),
         vol.Optional(CONF_MIN_TEMP): selector.NumberSelector(
             selector.NumberSelectorConfig(
-                min=5.0,
-                max=25.0,
+                min=DEFAULT_MIN_TEMP,
+                max=DEFAULT_MAX_TEMP,
                 step=0.5,
                 unit_of_measurement="°C",
                 mode=selector.NumberSelectorMode.BOX,
@@ -122,8 +126,8 @@ OPTIONS_SCHEMA = vol.Schema(
         ),
         vol.Optional(CONF_MAX_TEMP): selector.NumberSelector(
             selector.NumberSelectorConfig(
-                min=15.0,
-                max=35.0,
+                min=DEFAULT_MIN_TEMP,
+                max=DEFAULT_MAX_TEMP,
                 step=0.5,
                 unit_of_measurement="°C",
                 mode=selector.NumberSelectorMode.BOX,
@@ -131,8 +135,8 @@ OPTIONS_SCHEMA = vol.Schema(
         ),
         vol.Optional(CONF_TARGET_TEMP): selector.NumberSelector(
             selector.NumberSelectorConfig(
-                min=5.0,
-                max=35.0,
+                min=DEFAULT_MIN_TEMP,
+                max=DEFAULT_MAX_TEMP,
                 step=0.5,
                 unit_of_measurement="°C",
                 mode=selector.NumberSelectorMode.BOX,
@@ -153,7 +157,7 @@ OPTIONS_SCHEMA = vol.Schema(
             CONF_CYCLE_PERIOD, default=DEFAULT_CYCLE_PERIOD
         ): selector.NumberSelector(
             selector.NumberSelectorConfig(
-                min=300,
+                min=60,
                 max=1800,
                 step=60,
                 unit_of_measurement="seconds",
@@ -162,9 +166,9 @@ OPTIONS_SCHEMA = vol.Schema(
         ),
         vol.Optional(CONF_KEEP_ALIVE): selector.NumberSelector(
             selector.NumberSelectorConfig(
-                min=60,
+                min=30,
                 max=3600,
-                step=60,
+                step=30,
                 unit_of_measurement="seconds",
                 mode=selector.NumberSelectorMode.BOX,
             )
@@ -224,7 +228,7 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(CONF_PID_KP, default=DEFAULT_PID_KP): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0.1,
-                max=50.0,
+                max=200.0,
                 step=0.1,
                 mode=selector.NumberSelectorMode.BOX,
             )
@@ -232,7 +236,7 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(CONF_PID_KI, default=DEFAULT_PID_KI): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0.0,
-                max=10.0,
+                max=50.0,
                 step=0.1,
                 mode=selector.NumberSelectorMode.BOX,
             )
@@ -240,7 +244,7 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(CONF_PID_KD, default=DEFAULT_PID_KD): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0.0,
-                max=20.0,
+                max=50.0,
                 step=0.1,
                 mode=selector.NumberSelectorMode.BOX,
             )
@@ -250,7 +254,7 @@ OPTIONS_SCHEMA = vol.Schema(
         ): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0.1,
-                max=50.0,
+                max=200.0,
                 step=0.1,
                 mode=selector.NumberSelectorMode.BOX,
             )
@@ -260,7 +264,7 @@ OPTIONS_SCHEMA = vol.Schema(
         ): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0.0,
-                max=10.0,
+                max=50.0,
                 step=0.1,
                 mode=selector.NumberSelectorMode.BOX,
             )
@@ -270,7 +274,7 @@ OPTIONS_SCHEMA = vol.Schema(
         ): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0.0,
-                max=20.0,
+                max=50.0,
                 step=0.1,
                 mode=selector.NumberSelectorMode.BOX,
             )
