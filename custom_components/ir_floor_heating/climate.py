@@ -1,4 +1,4 @@
-"""Support for IR floor heating with dual-sensor control and TPI algorithm."""
+"""Climate platform for IR floor heating with dual-sensor control and TPI algorithm."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
     ClimateEntityFeature,
+    DEFAULT_MAX_TEMP,
+    DEFAULT_MIN_TEMP,
     HVACAction,
     HVACMode,
 )
@@ -37,6 +39,7 @@ from homeassistant.core import (
     callback,
 )
 from homeassistant.helpers.device import async_entity_id_to_device
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
@@ -85,7 +88,6 @@ from .const import (
     DEFAULT_PID_KI,
     DEFAULT_PID_KP,
     DEFAULT_SAFETY_HYSTERESIS,
-    DOMAIN,
 )
 from .pid import PIDController
 from .tpi import TPIController
@@ -169,8 +171,8 @@ async def async_setup_entry(
         floor_pid_kd=floor_pid_kd,
     )
 
-    # Store climate entity for access by sensor platform
-    hass.data[DOMAIN][config_entry.entry_id] = climate_entity
+    # Store climate entity in runtime_data for access by sensor platform
+    config_entry.runtime_data = climate_entity
 
     async_add_entities([climate_entity])
 
@@ -222,7 +224,13 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self.heater_entity_id = heater_entity_id
         self.room_sensor_entity_id = room_sensor_entity_id
         self.floor_sensor_entity_id = floor_sensor_entity_id
-        self.device_entry = async_entity_id_to_device(hass, heater_entity_id)
+        
+        # Set up device info from heater entity
+        if device_entry := async_entity_id_to_device(hass, heater_entity_id):
+            self._attr_device_info = DeviceInfo(
+                identifiers=device_entry.identifiers,
+                connections=device_entry.connections,
+            )
 
         # Temperature limits
         self._min_temp = min_temp
@@ -441,14 +449,14 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         """Return the minimum temperature."""
         if self._min_temp is not None:
             return self._min_temp
-        return super().min_temp
+        return DEFAULT_MIN_TEMP
 
     @property
     def max_temp(self) -> float:
         """Return the maximum temperature."""
         if self._max_temp is not None:
             return self._max_temp
-        return super().max_temp
+        return DEFAULT_MAX_TEMP
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -612,33 +620,39 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         """Update thermostat with latest room temperature from sensor."""
         try:
             room_temp = float(state.state)
-            if not math.isfinite(room_temp):
-                _LOGGER.exception(
-                    "Unable to update room temperature from sensor: "
-                    "Sensor has illegal state %s",
-                    state.state,
-                )
-                return
-            self._last_room_temp = self._room_temp
-            self._room_temp = room_temp
         except ValueError:
             _LOGGER.exception("Unable to update room temperature from sensor")
+            return
+
+        if not math.isfinite(room_temp):
+            _LOGGER.exception(
+                "Unable to update room temperature from sensor: "
+                "Sensor has illegal state %s",
+                state.state,
+            )
+            return
+
+        self._last_room_temp = self._room_temp
+        self._room_temp = room_temp
 
     @callback
     def _async_update_floor_temp(self, state: State) -> None:
         """Update thermostat with latest floor temperature from sensor."""
         try:
             floor_temp = float(state.state)
-            if not math.isfinite(floor_temp):
-                _LOGGER.exception(
-                    "Unable to update floor temperature from sensor: "
-                    "Sensor has illegal state %s",
-                    state.state,
-                )
-                return
-            self._floor_temp = floor_temp
         except ValueError:
             _LOGGER.exception("Unable to update floor temperature from sensor")
+            return
+
+        if not math.isfinite(floor_temp):
+            _LOGGER.exception(
+                "Unable to update floor temperature from sensor: "
+                "Sensor has illegal state %s",
+                state.state,
+            )
+            return
+
+        self._floor_temp = floor_temp
 
     def _calculate_effective_floor_limit(self) -> float:
         """Calculate effective floor temperature limit based on conditions."""

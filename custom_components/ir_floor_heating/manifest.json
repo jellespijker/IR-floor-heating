@@ -1,7 +1,7 @@
 {
   "domain": "ir_floor_heating",
   "name": "IR Floor Heating",
-  "codeowners": [],
+  "codeowners": ["@jellespijker"],
   "config_flow": true,
   "documentation": "https://github.com/jellespijker/IR-floor-heating",
   "integration_type": "device",

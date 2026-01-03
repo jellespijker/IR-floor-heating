@@ -1,4 +1,4 @@
-"""Support for IR floor heating diagnostic sensors."""
+"""Sensor platform for IR floor heating diagnostic sensors."""
 
 from __future__ import annotations
 
@@ -19,9 +19,6 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
-
-if TYPE_CHECKING:
     from .climate import IRFloorHeatingClimate
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,7 +33,7 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up IR floor heating sensors from a config entry."""
-    climate_entity: IRFloorHeatingClimate = hass.data[DOMAIN][config_entry.entry_id]
+    climate_entity = config_entry.runtime_data
 
     async_add_entities(
         [
@@ -63,11 +60,13 @@ class IRFloorHeatingBaseSensor(SensorEntity):
     def __init__(
         self,
         climate_entity: IRFloorHeatingClimate,
-        _config_entry: ConfigEntry,
+        config_entry: ConfigEntry,
     ) -> None:
         """Initialize the sensor."""
         self._climate_entity = climate_entity
-        self._attr_device_info = climate_entity.device_info
+        # Inherit device info from climate entity
+        if hasattr(climate_entity, "_attr_device_info"):
+            self._attr_device_info = climate_entity._attr_device_info
         # Use climate entity's unique_id as base for shorter, consistent IDs
         self._attr_unique_id = (
             f"{climate_entity.unique_id}_{self._attr_translation_key}"
