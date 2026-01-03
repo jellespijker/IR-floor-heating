@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
-    ClimateEntityFeature,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_TEMP,
+    ClimateEntityFeature,
     HVACAction,
     HVACMode,
 )
@@ -224,7 +224,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self.heater_entity_id = heater_entity_id
         self.room_sensor_entity_id = room_sensor_entity_id
         self.floor_sensor_entity_id = floor_sensor_entity_id
-        
+
         # Set up device info from heater entity
         if device_entry := async_entity_id_to_device(hass, heater_entity_id):
             self._attr_device_info = DeviceInfo(
