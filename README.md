@@ -40,25 +40,17 @@ Standard mechanical relays have an electrical life of ~100,000 cycles at full lo
 
 ### The Veto Architecture
 
-The controller implements a "Veto Architecture" where the Room Temperature PID loop acts as the **Demand Generator**, requesting heat to satisfy occupant comfort, while the Floor Temperature Sensors act as **Safety Gates**, possessing the authority to veto (block) the heat request regardless of the room's demand.
+The controller implements a **"Veto Architecture"** that serves as a high-priority safety layer. While the Dual-PID Min-Selector (described below) provides smooth, proactive temperature limiting, the Veto system acts as a hard **Safety Gate**. It possesses the authority to immediately block any heat request if floor temperature limits are exceeded, regardless of PID demand.
 
 ```mermaid
 graph TD
     subgraph "Demand Generation"
-        Target[Target Temp] --> Error
-        Room[Room Temp] --> Error
-        Error --> PID[PID Controller]
-        PID --> Demand[Heating Demand %]
+        DualPID[Dual-PID Min-Selector] --> Demand[Requested Demand %]
     end
 
     subgraph "Safety Gates (Veto)"
-        Floor[Floor Temp] --> CheckAbs{> Abs Max?}
-        Floor --> CheckDiff{> Diff Max?}
-        Room --> CheckDiff
-
-        CheckAbs -- Yes --> Veto[VETO ACTIVE]
-        CheckDiff -- Yes --> Veto
-
+        Floor[Floor Temp] --> CheckLimit{>= Effective Limit?}
+        CheckLimit -- Yes --> Veto[VETO ACTIVE]
         Veto --> Gate{Safety Gate}
     end
 
@@ -77,7 +69,7 @@ Most commercial thermostats only enforce an absolute floor limit (e.g., 28°C). 
 - $T_{room}$: Current Air Temperature
 - $T_{floor}$: Current Floor Temperature
 - $L_{abs}$: Absolute Maximum Floor Temperature (e.g., 28°C)
-- $\Delta_{max}$: Maximum Differential (e.g., 5°C)
+- $\Delta_{max}$: Maximum Differential (default: 8°C)
 
 **The Logic:**
 The differential limit creates a floating ceiling for the floor temperature:
@@ -87,21 +79,17 @@ The effective limit for the floor at any given moment is the stricter (lower) of
 $$Limit_{effective} = \min(L_{abs}, \ T_{room} + \Delta_{max})$$
 
 **Operational Examples:**
-Assuming $L_{abs} = 28^{\circ}$C and $\Delta_{max} = 5^{\circ}$C:
+Assuming $L_{abs} = 28^{\circ}$C and $\Delta_{max} = 8^{\circ}$C:
 
 1.  **Scenario A (Cold Room):** $T_{room} = 15^{\circ}$C
 
-    - $Limit_{effective} = \min(28, 15 + 5) = 20^{\circ}$C
-    - _Result:_ Floor is limited to 20°C to prevent thermal shock.
+    - $Limit_{effective} = \min(28, 15 + 8) = 23^{\circ}$C
+    - _Result:_ Floor is limited to 23°C to prevent thermal shock.
 
 2.  **Scenario B (Warm Room):** $T_{room} = 22^{\circ}$C
 
-    - $Limit_{effective} = \min(28, 22 + 5) = 27^{\circ}$C
-    - _Result:_ Floor can heat to 27°C to maintain room temp.
-
-3.  **Scenario C (Hot Room):** $T_{room} = 26^{\circ}$C
-    - $Limit_{effective} = \min(28, 26 + 5) = 28^{\circ}$C
-    - _Result:_ Absolute limit takes over.
+    - $Limit_{effective} = \min(28, 22 + 8) = 30^{\circ}$C (capped to 28°C)
+    - _Result:_ Absolute limit takes over at 28°C.
 
 #### Control Logic Pseudocode
 
@@ -205,22 +193,22 @@ This soft-limit approach allows the floor temperature to smoothly approach the l
 ### Advanced Safety Limits
 
 - **Absolute Maximum Floor Temperature**: Protects flooring materials (default: 28°C).
-- **Differential Maximum**: Limits temperature difference between floor and room (default: 5°C).
+- **Differential Maximum**: Limits temperature difference between floor and room (default: 8.0°C).
 - **Dynamic Limit Calculation**: Effective floor limit adapts based on current room temperature.
 
 ### TPI (Time Proportional & Integral) Algorithm
 
 - **Relay Protection**: Designed for mechanical relays.
-- **Cycle Period**: Configurable (default: 225 seconds).
+- **Cycle Period**: Configurable (default: 900 seconds).
 - **Minimum Cycle Duration**: Prevents excessive relay switching (default: 60 seconds).
-- **PID Control**: Precise temperature regulation (Kp=10.0, Ki=0.5, Kd=2.0).
+- **PID Control**: Precise temperature regulation (Kp=80.0, Ki=2.0, Kd=15.0).
 
 ### Boost Mode
 
 - Temporarily relaxes the differential limit when the room is far from the target temperature.
 - Enables faster warm-up from cold conditions.
 - Prevents "control stalling" where floor temperature is capped too low to effectively heat the room.
-- **Activation**: When error ≥ `boost_temp_diff` (default 2.0°C).
+- **Activation**: When error ≥ `boost_temp_diff` (default 1.5°C).
 - **Effect**: Increases effective floor limit to allow higher heat output.
 
 ## Configuration Parameters
@@ -248,11 +236,11 @@ This soft-limit approach allows the floor temperature to smoothly approach the l
 
 The integration provides several diagnostic sensors to monitor internal state (disabled by default):
 
-- `sensor.<name>_heating_demand`: Final heating demand (0-100%, result of min-selector).
+- `sensor.<name>_demand_percent`: Final heating demand (0-100%, result of min-selector).
 - `sensor.<name>_room_pid_demand`: Room temperature PID demand (0-100%).
 - `sensor.<name>_floor_pid_demand`: Floor limiter PID demand (0-100%).
 - `sensor.<name>_effective_floor_limit`: Current dynamic floor temperature limit (°C).
-- `sensor.<name>_safety_veto`: Binary state indicating if safety limits are restricting heating (0/1).
+- `sensor.<name>_safety_veto_active`: Binary state indicating if safety limits are restricting heating (0/1).
 - `sensor.<name>_integral_error`: Room PID accumulated integral error for diagnostics (°C·s).
 - `sensor.<name>_room_integral_error`: Room PID integral error term (°C·s).
 - `sensor.<name>_floor_integral_error`: Floor limiter PID integral error term (°C·s).
@@ -266,6 +254,8 @@ The climate entity exposes the following additional attributes:
 - `effective_floor_limit`: Dynamically calculated floor temperature limit.
 - `demand_percent`: Calculated heating demand.
 - `safety_veto_active`: Whether safety limits are currently restricting heating.
+- `room_pid_demand`: Room temperature PID demand (0-100%).
+- `floor_pid_demand`: Floor limiter PID demand (0-100%).
 
 ## Use Cases
 
