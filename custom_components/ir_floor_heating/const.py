@@ -32,7 +32,7 @@ DEFAULT_NAME = "IR floor heating"
 DEFAULT_TOLERANCE = 0.1
 DEFAULT_MAX_FLOOR_TEMP = 28.0  # °C - Safe for engineered wood/laminate
 DEFAULT_MAX_FLOOR_TEMP_DIFF = 8.0  # °C - Maximum floor-room differential
-DEFAULT_CYCLE_PERIOD = 600  # 10 minutes (6 cycles per hour for relay protection)
+DEFAULT_CYCLE_PERIOD = 900  # 15 minutes (4 cycles per hour for relay protection)
 DEFAULT_MIN_CYCLE_DURATION = 60  # 1 minute minimum on/off time
 DEFAULT_BOOST_TEMP_DIFF = (
     1.5  # °C - Relax differential limit if room is this far from target
@@ -41,6 +41,6 @@ DEFAULT_SAFETY_HYSTERESIS = (
     0.25  # °C - Hysteresis for safety limit to prevent chattering
 )
 # PID tuning defaults (optimized for floor heating)
-DEFAULT_PID_KP = 40.0  # Proportional gain
-DEFAULT_PID_KI = 1.0  # Integral gain
-DEFAULT_PID_KD = 30.0  # Derivative gain
+DEFAULT_PID_KP = 80.0  # Proportional gain
+DEFAULT_PID_KI = 2.0  # Integral gain
+DEFAULT_PID_KD = 15.0  # Derivative gain
