@@ -546,6 +546,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         _LOGGER.info(
             "Maintain comfort limit mode %s", "enabled" if enabled else "disabled"
         )
+        self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set hvac mode."""
