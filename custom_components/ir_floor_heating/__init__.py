@@ -5,15 +5,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from homeassistant.const import Platform
 from homeassistant.core import ServiceCall, ServiceResponse, callback
 
 from .climate import IRFloorHeatingClimate
-from .const import DOMAIN as DOMAIN
-from .const import PLATFORMS
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +26,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up IR floor heating from a config entry."""
     _LOGGER.info("Setting up IR Floor Heating integration")
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Set up climate platform first and store climate entity in runtime_data
+    await hass.config_entries.async_forward_entry_setups(entry, [Platform.CLIMATE])
+
+    # Now set up the remaining platforms that depend on runtime_data
+    await hass.config_entries.async_forward_entry_setups(
+        entry, [Platform.BINARY_SENSOR, Platform.SENSOR]
+    )
+
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     # Register service to toggle maintain comfort limit
@@ -36,7 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         climate_entity = entry.runtime_data
 
         if isinstance(climate_entity, IRFloorHeatingClimate):
-            climate_entity.set_maintain_comfort_limit(enabled)
+            climate_entity.set_maintain_comfort_limit(enabled=enabled)
             return {"success": True, "enabled": enabled}
 
         _LOGGER.error("Climate entity not found in runtime_data")
@@ -54,7 +62,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    return await hass.config_entries.async_unload_platforms(
+        entry, [Platform.BINARY_SENSOR, Platform.CLIMATE, Platform.SENSOR]
+    )
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
