@@ -3,7 +3,7 @@
 from homeassistant.const import Platform
 
 DOMAIN = "ir_floor_heating"
-PLATFORMS = [Platform.CLIMATE, Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.CLIMATE, Platform.SENSOR]
 
 # Configuration parameters
 CONF_HEATER = "heater"
@@ -29,12 +29,13 @@ CONF_FLOOR_PID_KP = "floor_pid_kp"
 CONF_FLOOR_PID_KI = "floor_pid_ki"
 CONF_FLOOR_PID_KD = "floor_pid_kd"
 CONF_SAFETY_HYSTERESIS = "safety_hysteresis"
+CONF_MAINTAIN_COMFORT_LIMIT = "maintain_comfort_limit"
 
 # Default values
 DEFAULT_NAME = "IR floor heating"
 DEFAULT_TOLERANCE = 0.1
 DEFAULT_MAX_FLOOR_TEMP = 28.0  # °C - Safe for engineered wood/laminate
-DEFAULT_MAX_FLOOR_TEMP_DIFF = 8.0  # °C - Maximum floor-room differential
+DEFAULT_MAX_FLOOR_TEMP_DIFF = 5.0  # °C - Maximum floor-room differential
 DEFAULT_CYCLE_PERIOD = 900  # 15 minutes (4 cycles per hour for relay protection)
 DEFAULT_MIN_CYCLE_DURATION = 60  # 1 minute minimum on/off time
 DEFAULT_BOOST_TEMP_DIFF = (
@@ -43,6 +44,7 @@ DEFAULT_BOOST_TEMP_DIFF = (
 DEFAULT_SAFETY_HYSTERESIS = (
     0.25  # °C - Hysteresis for safety limit to prevent chattering
 )
+DEFAULT_MAINTAIN_COMFORT_LIMIT = False  # Disabled by default
 # PID tuning defaults (optimized for floor heating)
 DEFAULT_PID_KP = 80.0  # Proportional gain
 DEFAULT_PID_KI = 2.0  # Integral gain

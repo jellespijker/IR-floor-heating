@@ -45,7 +45,8 @@
           "safety_hysteresis": "Safety limit hysteresis",
           "pid_kp": "PID proportional gain (Kp)",
           "pid_ki": "PID integral gain (Ki)",
-          "pid_kd": "PID derivative gain (Kd)"
+          "pid_kd": "PID derivative gain (Kd)",
+          "maintain_comfort_limit": "Maintain comfort limit during cooling"
         },
         "data_description": {
           "max_floor_temp": "Maximum allowed floor surface temperature (material safety limit). For engineered wood/laminate: 27-28°C",
@@ -57,7 +58,8 @@
           "safety_hysteresis": "Hysteresis band for safety limits. Prevents rapid on/off cycling when temperature is near the limit. Typical: 0.5°C",
           "pid_kp": "Proportional gain: Response to current temperature error. Higher = faster response but may overshoot. Default: 10.0",
           "pid_ki": "Integral gain: Eliminates steady-state error over time. Higher = faster elimination but may cause overshoot. Default: 0.5",
-          "pid_kd": "Derivative gain: Dampens rate of change. Higher = less overshoot but may slow response. Default: 2.0"
+          "pid_kd": "Derivative gain: Dampens rate of change. Higher = less overshoot but may slow response. Default: 2.0",
+          "maintain_comfort_limit": "When enabled, the floor temperature tries to maintain the comfort offset (max_floor_temp_diff) from the target room temperature. This prevents the floor from cooling too fast."
         }
       }
     }
@@ -97,9 +99,6 @@
       "effective_floor_limit": {
         "name": "Effective floor limit"
       },
-      "safety_veto_active": {
-        "name": "Safety veto"
-      },
       "integral_error": {
         "name": "PID integral error"
       },
@@ -117,6 +116,14 @@
       },
       "relay_toggle_count": {
         "name": "Relay toggle count"
+      }
+    },
+    "binary_sensor": {
+      "safety_veto_active": {
+        "name": "Safety veto"
+      },
+      "maintain_comfort_limit": {
+        "name": "Maintain comfort limit"
       }
     }
   }

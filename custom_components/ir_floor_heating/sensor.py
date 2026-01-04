@@ -39,7 +39,6 @@ async def async_setup_entry(
         [
             IRFloorHeatingDemandSensor(climate_entity, config_entry),
             IRFloorHeatingEffectiveLimitSensor(climate_entity, config_entry),
-            IRFloorHeatingSafetyVetoSensor(climate_entity, config_entry),
             IRFloorHeatingIntegralErrorSensor(climate_entity, config_entry),
             IRFloorHeatingRoomPIDDemandSensor(climate_entity, config_entry),
             IRFloorHeatingFloorPIDDemandSensor(climate_entity, config_entry),
@@ -129,20 +128,6 @@ class IRFloorHeatingEffectiveLimitSensor(IRFloorHeatingBaseSensor):
     def native_value(self) -> float | None:
         """Return the effective floor temperature limit."""
         return self._climate_entity.effective_floor_limit
-
-
-class IRFloorHeatingSafetyVetoSensor(IRFloorHeatingBaseSensor):
-    """Sensor for safety veto status (0 = off, 1 = active)."""
-
-    _attr_translation_key = "safety_veto_active"
-    _attr_native_unit_of_measurement = None
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_suggested_display_precision = 0
-
-    @property
-    def native_value(self) -> int:
-        """Return 1 if safety veto is active, 0 otherwise."""
-        return 1 if self._climate_entity.safety_veto_active else 0
 
 
 class IRFloorHeatingIntegralErrorSensor(IRFloorHeatingBaseSensor):
