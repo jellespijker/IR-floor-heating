@@ -34,6 +34,9 @@ from .const import (
     CONF_FLOOR_PID_KP,
     CONF_FLOOR_SENSOR,
     CONF_HEATER,
+    CONF_HEATER_ENTITY_ID,
+    CONF_HEATER_POWER,
+    CONF_HEATERS,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
     CONF_MAINTAIN_COMFORT_LIMIT,
@@ -68,6 +71,7 @@ from .const import (
 )
 
 # Configuration schema for the initial setup
+# Keep single heater format for backward compatibility and simplicity
 CONFIG_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_NAME, default=DEFAULT_NAME): selector.TextSelector(),
@@ -83,9 +87,30 @@ CONFIG_SCHEMA = vol.Schema(
     }
 )
 
+# Heater definition schema for multiple heaters
+HEATER_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_HEATER_ENTITY_ID): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="switch")
+        ),
+        vol.Required(CONF_HEATER_POWER, default=1500.0): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=100.0,
+                max=10000.0,
+                step=100.0,
+                unit_of_measurement="W",
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+    }
+)
+
 # Options schema for advanced configuration
+# Supports both single heater (legacy) and multiple heaters (new)
 OPTIONS_SCHEMA = vol.Schema(
     {
+        # Keep single CONF_HEATER for backward compatibility in options
+        # If user has multiple heaters, they can migrate via the UI flow
         vol.Required(CONF_HEATER): selector.EntitySelector(
             selector.EntitySelectorConfig(domain="switch")
         ),

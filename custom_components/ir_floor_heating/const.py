@@ -6,7 +6,10 @@ DOMAIN = "ir_floor_heating"
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.CLIMATE, Platform.SENSOR]
 
 # Configuration parameters
-CONF_HEATER = "heater"
+CONF_HEATER = "heater"  # Deprecated: single heater (kept for backward compatibility)
+CONF_HEATERS = "heaters"  # New: list of heater configurations
+CONF_HEATER_ENTITY_ID = "entity_id"  # Entity ID for a heater in the list
+CONF_HEATER_POWER = "power"  # Power rating for a heater in the list
 CONF_ROOM_SENSOR = "room_sensor"
 CONF_FLOOR_SENSOR = "floor_sensor"
 CONF_TARGET_TEMP = "target_temp"

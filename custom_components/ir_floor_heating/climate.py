@@ -61,6 +61,9 @@ from .const import (
     CONF_FLOOR_PID_KP,
     CONF_FLOOR_SENSOR,
     CONF_HEATER,
+    CONF_HEATER_ENTITY_ID,
+    CONF_HEATER_POWER,
+    CONF_HEATERS,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
     CONF_MAINTAIN_COMFORT_LIMIT,
@@ -92,8 +95,8 @@ from .const import (
     DEFAULT_PID_KP,
     DEFAULT_SAFETY_HYSTERESIS,
 )
+from .heater_manager import Heater, HeaterShuffler
 from .pid import PIDController
-from .tpi import TPIController
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,7 +110,8 @@ class ClimateConfig:
 
     hass: HomeAssistant
     name: str
-    heater_entity_id: str
+    heater_entity_ids: list[str]  # Support single or multiple heaters
+    heater_powers: list[float]  # Power ratings corresponding to each heater
     room_sensor_entity_id: str
     floor_sensor_entity_id: str
     min_temp: float | None
@@ -145,10 +149,21 @@ async def async_setup_entry(
     # This ensures compatibility with both initial setup and options updates
     config = config_entry.options if config_entry.options else config_entry.data
 
+    # Support both old single heater and new multiple heaters format
+    if CONF_HEATERS in config:
+        # New format: list of heaters
+        heater_entity_ids = [h[CONF_HEATER_ENTITY_ID] for h in config[CONF_HEATERS]]
+        heater_powers = [h[CONF_HEATER_POWER] for h in config[CONF_HEATERS]]
+    else:
+        # Legacy format: single heater
+        heater_entity_ids = [config[CONF_HEATER]]
+        heater_powers = [1.0]  # Default relative power unit
+
     climate_config = ClimateConfig(
         hass=hass,
         name=config.get(CONF_NAME, DEFAULT_NAME),
-        heater_entity_id=config[CONF_HEATER],
+        heater_entity_ids=heater_entity_ids,
+        heater_powers=heater_powers,
         room_sensor_entity_id=config[CONF_ROOM_SENSOR],
         floor_sensor_entity_id=config[CONF_FLOOR_SENSOR],
         min_temp=config.get(CONF_MIN_TEMP),
@@ -210,13 +225,13 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
     def __init__(self, config: ClimateConfig) -> None:
         """Initialize the IR floor heating climate device."""
         self.hass = config.hass
-        self.heater_entity_id = config.heater_entity_id
+        self.heater_entity_ids = config.heater_entity_ids
         self.room_sensor_entity_id = config.room_sensor_entity_id
         self.floor_sensor_entity_id = config.floor_sensor_entity_id
 
-        # Set up device info from heater entity
+        # Set up device info from first heater entity
         if device_entry := async_entity_id_to_device(
-            config.hass, config.heater_entity_id
+            config.hass, config.heater_entity_ids[0]
         ):
             self._attr_device_info = DeviceInfo(
                 identifiers=device_entry.identifiers,
@@ -247,6 +262,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self._active = False
         self._room_temp: float | None = None
         self._floor_temp: float | None = None
+        self._last_room_temp: float | None = None
         self._temp_lock = asyncio.Lock()
         self._attr_temperature_unit = config.unit
         self._attr_unique_id = config.unique_id
@@ -256,14 +272,21 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             | ClimateEntityFeature.TURN_ON
         )
 
-        # TPI control state
-        self._cycle_start_time: datetime | None = None
+        # Initialize HeaterShuffler for multi-relay actuation
+        heaters = [
+            Heater(entity_id=entity_id, power=power)
+            for entity_id, power in zip(config.heater_entity_ids, config.heater_powers)
+        ]
+        self._heater_shuffler = HeaterShuffler(
+            hass=config.hass,
+            heaters=heaters,
+            cycle_period=config.cycle_period,
+            min_cycle_duration=config.min_cycle_duration,
+        )
+
+        # Control state
         self._demand_percent: float = 0.0
         self._safety_veto_active: bool = False
-        self._last_relay_state: bool = False
-
-        # Relay toggle counter (restored from previous state via RestoreEntity)
-        self._relay_toggle_count: int = 0
 
         # PID Controllers (Dual-PID Min-Selector Architecture)
         self._room_pid = PIDController(
@@ -278,10 +301,6 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             kd=config.floor_pid_kd,
             name="Floor Limiter",
         )
-        self._tpi_controller = TPIController(
-            cycle_period=config.cycle_period,
-            min_cycle_duration=config.min_cycle_duration,
-        )
 
         # PID demand values
         self._room_demand_percent: float = 0.0
@@ -290,12 +309,13 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
         _LOGGER.info(
             "IR Floor Heating initialized: '%s' - Room sensor: %s, Floor sensor: %s, "
-            "Max floor temp: %.1f°C, Max diff: %.1f°C, Cycle period: %ds, "
-            "Room PID (Kp=%.1f, Ki=%.1f, Kd=%.1f), "
+            "Heaters: %s, Max floor temp: %.1f°C, Max diff: %.1f°C, "
+            "Cycle period: %ds, Room PID (Kp=%.1f, Ki=%.1f, Kd=%.1f), "
             "Floor PID (Kp=%.1f, Ki=%.1f, Kd=%.1f)",
             config.name,
             config.room_sensor_entity_id,
             config.floor_sensor_entity_id,
+            ", ".join(config.heater_entity_ids),
             config.max_floor_temp,
             config.max_floor_temp_diff,
             config.cycle_period.total_seconds(),
@@ -324,9 +344,11 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                 self._async_floor_sensor_changed,
             )
         )
+
+        # Track all heater switches
         self.async_on_remove(
             async_track_state_change_event(
-                self.hass, [self.heater_entity_id], self._async_switch_changed
+                self.hass, self.heater_entity_ids, self._async_switch_changed
             )
         )
 
@@ -362,14 +384,16 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             ):
                 self._async_update_floor_temp(floor_state)
 
-            switch_state = self.hass.states.get(self.heater_entity_id)
-            if switch_state and switch_state.state not in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
-                self.hass.async_create_task(
-                    self._check_switch_initial_state(), eager_start=True
-                )
+            # Check initial switch states
+            for heater_entity_id in self.heater_entity_ids:
+                switch_state = self.hass.states.get(heater_entity_id)
+                if switch_state and switch_state.state not in (
+                    STATE_UNAVAILABLE,
+                    STATE_UNKNOWN,
+                ):
+                    self.hass.async_create_task(
+                        self._check_switch_initial_state(), eager_start=True
+                    )
 
             self.async_write_ha_state()
 
@@ -394,12 +418,6 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                     self._target_temp = float(old_state.attributes[ATTR_TEMPERATURE])
             if not self._hvac_mode and old_state.state:
                 self._hvac_mode = HVACMode(old_state.state)
-
-            # Restore relay toggle count
-            if (
-                toggle_count := old_state.attributes.get("relay_toggle_count")
-            ) is not None:
-                self._relay_toggle_count = int(toggle_count)
         else:
             if self._target_temp is None:
                 self._target_temp = self.min_temp
@@ -475,8 +493,19 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             "room_pid_demand": round(self._room_demand_percent, 1),
             "floor_pid_demand": round(self._floor_demand_percent, 1),
             "safety_veto_active": self._safety_veto_active,
-            "relay_toggle_count": self._relay_toggle_count,
+            "total_toggle_count": self._heater_shuffler.get_total_toggle_count(),
         }
+
+        # Add per-heater toggle counts
+        heater_info = self._heater_shuffler.get_heater_info()
+        for entity_id, info in heater_info.items():
+            heater_name = info["name"]
+            attrs[f"toggle_count_{heater_name}"] = info["toggle_count"]
+
+        # Add rotation info for diagnostics
+        rotation_info = self._heater_shuffler.get_rotation_info()
+        attrs["heater_rotation_index"] = rotation_info["rotation_index"]
+        attrs["heater_priority_order"] = rotation_info["current_priority_order"]
 
         if self._room_temp is not None:
             effective_limit = self._calculate_effective_floor_limit()
@@ -521,11 +550,6 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         return round(self._floor_demand_percent, 1)
 
     @property
-    def relay_toggle_count(self) -> int:
-        """Return the total number of relay toggles since tracking started."""
-        return self._relay_toggle_count
-
-    @property
     def room_integral_error(self) -> float:
         """Return the room PID integral error term."""
         return round(self._room_pid.get_integral_error(), 1)
@@ -556,7 +580,15 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         elif hvac_mode == HVACMode.OFF:
             self._hvac_mode = HVACMode.OFF
             if self._is_device_active:
-                await self._async_heater_turn_off()
+                # Turn off all heaters
+                for heater_entity_id in self.heater_entity_ids:
+                    if self.hass.states.is_state(heater_entity_id, STATE_ON):
+                        await self.hass.services.async_call(
+                            HOMEASSISTANT_DOMAIN,
+                            SERVICE_TURN_OFF,
+                            {ATTR_ENTITY_ID: heater_entity_id},
+                            context=self._context,
+                        )
         else:
             _LOGGER.error("Unrecognized hvac mode: %s", hvac_mode)
             return
@@ -618,13 +650,20 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
     async def _check_switch_initial_state(self) -> None:
         """Prevent the device from keep running if HVACMode.OFF."""
-        if self._hvac_mode == HVACMode.OFF and self._is_device_active:
-            _LOGGER.warning(
-                "The climate mode is OFF, but the switch device is ON. "
-                "Turning off device %s",
-                self.heater_entity_id,
-            )
-            await self._async_heater_turn_off()
+        if self._hvac_mode == HVACMode.OFF:
+            for heater_entity_id in self.heater_entity_ids:
+                if self.hass.states.is_state(heater_entity_id, STATE_ON):
+                    _LOGGER.warning(
+                        "The climate mode is OFF, but switch is ON. "
+                        "Turning off %s",
+                        heater_entity_id,
+                    )
+                    await self.hass.services.async_call(
+                        HOMEASSISTANT_DOMAIN,
+                        SERVICE_TURN_OFF,
+                        {ATTR_ENTITY_ID: heater_entity_id},
+                        context=self._context,
+                    )
 
     @callback
     def _async_switch_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -790,7 +829,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
     async def _async_control_heating(
         self, _time: datetime | None = None, *, force: bool = False
     ) -> None:
-        """Control heating using dual-PID min-selector with TPI actuation."""
+        """Control heating using dual-PID min-selector with multi-relay actuation."""
         async with self._temp_lock:
             # Activate control once we have all required temperatures
             if not self._active and None not in (
@@ -799,7 +838,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                 self._target_temp,
             ):
                 self._active = True
-                self._tpi_controller.reset_cycle()
+                self._heater_shuffler.reset_cycle()
                 _LOGGER.info(
                     "IR floor heating active. Room: %.1f°C, Floor: %.1f°C, "
                     "Target: %.1f°C",
@@ -862,65 +901,43 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
             # Force immediate update if requested
             if force:
-                self._tpi_controller.reset_cycle()
+                self._heater_shuffler.reset_cycle()
 
     async def _async_tpi_cycle(self, _time: datetime | None = None) -> None:
-        """Execute Time Proportional & Integral (TPI) control cycle."""
+        """Execute Time Proportional & Integral (TPI) control cycle with multi-relay actuation."""
         if not self._active or self._hvac_mode == HVACMode.OFF:
             return
 
-        # Get relay state from TPI controller
-        should_be_on = self._tpi_controller.get_relay_state(self._final_demand_percent)
+        # Apply demand using cascading power bucket algorithm
+        heater_states = await self._heater_shuffler.async_apply_demand(
+            self._final_demand_percent,
+            context=self._context,
+        )
 
-        # Actuate relay if state should change
-        if should_be_on and not self._is_device_active:
-            cycle_info = self._tpi_controller.get_cycle_info()
-            _LOGGER.info(
-                "Heater ON (demand %.0f%%, cycle %.0f/%.0fs)",
-                self._final_demand_percent,
-                cycle_info["time_in_cycle"],
-                cycle_info["cycle_period"],
-            )
-            await self._async_heater_turn_on()
-        elif not should_be_on and self._is_device_active:
-            cycle_info = self._tpi_controller.get_cycle_info()
-            _LOGGER.info(
-                "Heater OFF (demand %.0f%%, cycle %.0f/%.0fs)",
-                self._final_demand_percent,
-                cycle_info["time_in_cycle"],
-                cycle_info["cycle_period"],
-            )
-            await self._async_heater_turn_off()
+        # Log state changes for diagnostics
+        cycle_info = self._heater_shuffler.get_cycle_info()
+        for state in heater_states:
+            if state.duty_cycle > 0:
+                if state.should_be_on:
+                    _LOGGER.debug(
+                        "%s: ON (100%% duty, cycle %.0f/%.0fs)",
+                        state.entity_id,
+                        cycle_info["time_in_cycle"],
+                        cycle_info["cycle_period"],
+                    )
+                else:
+                    _LOGGER.debug(
+                        "%s: TPI %.0f%% (cycle %.0f/%.0fs)",
+                        state.entity_id,
+                        state.duty_cycle,
+                        cycle_info["time_in_cycle"],
+                        cycle_info["cycle_period"],
+                    )
 
     @property
     def _is_device_active(self) -> bool | None:
-        """Check if the toggleable device is currently active."""
-        if not self.hass.states.get(self.heater_entity_id):
-            return None
-        return self.hass.states.is_state(self.heater_entity_id, STATE_ON)
-
-    async def _async_heater_turn_on(self) -> None:
-        """Turn heater toggleable device on."""
-        if not self._last_relay_state:
-            self._last_relay_state = True
-            self._relay_toggle_count += 1
-        _LOGGER.debug("Turning on heater %s", self.heater_entity_id)
-        await self.hass.services.async_call(
-            HOMEASSISTANT_DOMAIN,
-            SERVICE_TURN_ON,
-            {ATTR_ENTITY_ID: self.heater_entity_id},
-            context=self._context,
-        )
-
-    async def _async_heater_turn_off(self) -> None:
-        """Turn heater toggleable device off."""
-        if self._last_relay_state:
-            self._last_relay_state = False
-            self._relay_toggle_count += 1
-        _LOGGER.debug("Turning off heater %s", self.heater_entity_id)
-        await self.hass.services.async_call(
-            HOMEASSISTANT_DOMAIN,
-            SERVICE_TURN_OFF,
-            {ATTR_ENTITY_ID: self.heater_entity_id},
-            context=self._context,
-        )
+        """Check if any heater is currently active."""
+        for entity_id in self.heater_entity_ids:
+            if self.hass.states.is_state(entity_id, STATE_ON):
+                return True
+        return False
