@@ -112,7 +112,7 @@ class IRFloorHeatingMaintainComfortLimitBinarySensor(IRFloorHeatingBaseBinarySen
     """Binary sensor for maintain comfort limit mode status."""
 
     _attr_translation_key = "maintain_comfort_limit"
-    _attr_device_class = BinarySensorDeviceClass.POWER
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_entity_registry_enabled_default = True
 
     @property

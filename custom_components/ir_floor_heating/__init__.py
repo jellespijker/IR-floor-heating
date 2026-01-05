@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
-from homeassistant.core import ServiceCall, ServiceResponse, callback
+from homeassistant.core import ServiceCall, ServiceResponse, SupportsResponse, callback
 
 from .climate import IRFloorHeatingClimate
 
@@ -54,7 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DOMAIN,
         SERVICE_SET_MAINTAIN_COMFORT_LIMIT,
         handle_set_maintain_comfort_limit,
-        supports_response="only",
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
     return True
