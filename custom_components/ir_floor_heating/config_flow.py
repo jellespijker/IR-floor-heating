@@ -36,6 +36,7 @@ from .const import (
     CONF_HEATER,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
+    CONF_MAINTAIN_COMFORT_LIMIT,
     CONF_MAX_FLOOR_TEMP,
     CONF_MAX_FLOOR_TEMP_DIFF,
     CONF_MAX_TEMP,
@@ -54,6 +55,7 @@ from .const import (
     DEFAULT_FLOOR_PID_KD,
     DEFAULT_FLOOR_PID_KI,
     DEFAULT_FLOOR_PID_KP,
+    DEFAULT_MAINTAIN_COMFORT_LIMIT,
     DEFAULT_MAX_FLOOR_TEMP,
     DEFAULT_MAX_FLOOR_TEMP_DIFF,
     DEFAULT_MIN_CYCLE_DURATION,
@@ -279,9 +281,11 @@ OPTIONS_SCHEMA = vol.Schema(
                 mode=selector.NumberSelectorMode.BOX,
             )
         ),
+        vol.Optional(
+            CONF_MAINTAIN_COMFORT_LIMIT, default=DEFAULT_MAINTAIN_COMFORT_LIMIT
+        ): selector.BooleanSelector(),
     }
 )
-
 
 CONFIG_FLOW = {
     "user": SchemaFlowFormStep(CONFIG_SCHEMA),

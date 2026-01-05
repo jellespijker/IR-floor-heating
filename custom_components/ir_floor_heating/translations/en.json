@@ -21,6 +21,14 @@
         }
     },
     "entity": {
+        "binary_sensor": {
+            "maintain_comfort_limit": {
+                "name": "Maintain comfort limit"
+            },
+            "safety_veto_active": {
+                "name": "Safety veto"
+            }
+        },
         "climate": {
             "ir_floor_heating": {
                 "state_attributes": {
@@ -72,9 +80,6 @@
             },
             "room_pid_demand": {
                 "name": "Room PID demand"
-            },
-            "safety_veto_active": {
-                "name": "Safety veto"
             }
         }
     },
@@ -89,6 +94,7 @@
                     "heater": "Heater switch",
                     "initial_hvac_mode": "Initial HVAC mode",
                     "keep_alive": "Keep-alive interval",
+                    "maintain_comfort_limit": "Maintain comfort limit during cooling",
                     "max_floor_temp": "Absolute maximum floor temperature",
                     "max_floor_temp_diff": "Maximum floor-room temperature differential",
                     "max_temp": "Maximum setpoint temperature",
@@ -107,6 +113,7 @@
                     "boost_mode": "Temporarily relax differential limit when room is far from target to enable faster warm-up",
                     "boost_temp_diff": "Temperature error threshold to activate boost mode. When (target - room) > this value, differential limit is relaxed",
                     "cycle_period": "TPI cycle duration. Standard: 900 seconds (15 min = 4 cycles/hour) for 10+ year relay life",
+                    "maintain_comfort_limit": "When enabled, the floor temperature tries to maintain the comfort offset (max_floor_temp_diff) from the target room temperature. This prevents the floor from cooling too fast.",
                     "max_floor_temp": "Maximum allowed floor surface temperature (material safety limit). For engineered wood/laminate: 27-28\u00b0C",
                     "max_floor_temp_diff": "Maximum allowed temperature difference between floor and room (comfort limit). Prevents thermal shock and 'hot feet' sensation",
                     "min_cycle_duration": "Minimum on/off time per cycle. Protects mechanical relay from excessive wear. Typical: 60 seconds",

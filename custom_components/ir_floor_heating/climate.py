@@ -63,6 +63,7 @@ from .const import (
     CONF_HEATER,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
+    CONF_MAINTAIN_COMFORT_LIMIT,
     CONF_MAX_FLOOR_TEMP,
     CONF_MAX_FLOOR_TEMP_DIFF,
     CONF_MAX_TEMP,
@@ -81,6 +82,7 @@ from .const import (
     DEFAULT_FLOOR_PID_KD,
     DEFAULT_FLOOR_PID_KI,
     DEFAULT_FLOOR_PID_KP,
+    DEFAULT_MAINTAIN_COMFORT_LIMIT,
     DEFAULT_MAX_FLOOR_TEMP,
     DEFAULT_MAX_FLOOR_TEMP_DIFF,
     DEFAULT_MIN_CYCLE_DURATION,
@@ -130,6 +132,7 @@ class ClimateConfig:
     floor_pid_kp: float
     floor_pid_ki: float
     floor_pid_kd: float
+    maintain_comfort_limit: bool
 
 
 async def async_setup_entry(
@@ -180,6 +183,9 @@ async def async_setup_entry(
         floor_pid_kp=config.get(CONF_FLOOR_PID_KP, DEFAULT_FLOOR_PID_KP),
         floor_pid_ki=config.get(CONF_FLOOR_PID_KI, DEFAULT_FLOOR_PID_KI),
         floor_pid_kd=config.get(CONF_FLOOR_PID_KD, DEFAULT_FLOOR_PID_KD),
+        maintain_comfort_limit=config.get(
+            CONF_MAINTAIN_COMFORT_LIMIT, DEFAULT_MAINTAIN_COMFORT_LIMIT
+        ),
     )
 
     climate_entity = IRFloorHeatingClimate(climate_config)
@@ -230,6 +236,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self._boost_mode = config.boost_mode
         self._boost_temp_diff = config.boost_temp_diff
         self._safety_hysteresis = config.safety_hysteresis
+        self._maintain_comfort_limit = config.maintain_comfort_limit
 
         # State variables
         self._hvac_mode = config.initial_hvac_mode
@@ -528,6 +535,19 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         """Return the floor PID integral error term."""
         return round(self._floor_pid.get_integral_error(), 1)
 
+    @property
+    def maintain_comfort_limit(self) -> bool:
+        """Return whether maintain comfort limit mode is active."""
+        return self._maintain_comfort_limit
+
+    def set_maintain_comfort_limit(self, *, enabled: bool) -> None:
+        """Enable or disable maintain comfort limit mode."""
+        self._maintain_comfort_limit = enabled
+        _LOGGER.info(
+            "Maintain comfort limit mode %s", "enabled" if enabled else "disabled"
+        )
+        self.async_write_ha_state()
+
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set hvac mode."""
         if hvac_mode == HVACMode.HEAT:
@@ -662,6 +682,24 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         """Calculate effective floor temperature limit based on conditions."""
         if self._room_temp is None:
             return self._max_floor_temp
+
+        # When maintaining comfort limit set the effective floor limit as a target
+        # setpoint. But only do this if the target room setpoint temperature is
+        # higher than the actual room temperature.
+        # If the target is lower, we want a controlled cooldown: the limit follows
+        # the room temperature ensuring the floor stays comfortable relative to
+        # the current room temp during passive cooling.
+        if self._maintain_comfort_limit and self._target_temp is not None:
+            if self._target_temp > self._room_temp:
+                # Heating up: Floor stays at comfort offset above target room temp
+                comfort_floor_limit = self._target_temp + self._max_floor_temp_diff
+            else:
+                # Cooling down: Floor stays at comfort offset above current room temp
+                # This ensures controlled cooldown as room temp drops via heatloss
+                comfort_floor_limit = self._room_temp + self._max_floor_temp_diff
+
+            # Still apply absolute max temperature constraint
+            return min(self._max_floor_temp, comfort_floor_limit)
 
         # Calculate differential limit
         diff_limit = self._room_temp + self._max_floor_temp_diff

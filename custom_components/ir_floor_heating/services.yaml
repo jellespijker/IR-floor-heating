@@ -1,0 +1,12 @@
+set_maintain_comfort_limit:
+  name: Set maintain comfort limit
+  description: Enable or disable maintain comfort limit mode for the floor heating system.
+  fields:
+    enabled:
+      name: Enabled
+      description: Whether to enable or disable maintain comfort limit mode.
+      required: false
+      default: true
+      example: true
+      selector:
+        boolean:
