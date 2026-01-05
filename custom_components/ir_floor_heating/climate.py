@@ -683,11 +683,21 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         if self._room_temp is None:
             return self._max_floor_temp
 
-        # When maintain_comfort_limit is enabled, keep floor at max_floor_temp_diff
-        # above target room temp, allowing active cooling during room cooldown
+        # When maintaining comfort limit set the effective floor limit as a target
+        # setpoint. But only do this if the target room setpoint temperature is
+        # higher than the actual room temperature.
+        # If the target is lower, we want a controlled cooldown: the limit follows
+        # the room temperature ensuring the floor stays comfortable relative to
+        # the current room temp during passive cooling.
         if self._maintain_comfort_limit and self._target_temp is not None:
-            # Floor should stay at comfort offset above the target room temperature
-            comfort_floor_limit = self._target_temp + self._max_floor_temp_diff
+            if self._target_temp > self._room_temp:
+                # Heating up: Floor stays at comfort offset above target room temp
+                comfort_floor_limit = self._target_temp + self._max_floor_temp_diff
+            else:
+                # Cooling down: Floor stays at comfort offset above current room temp
+                # This ensures controlled cooldown as room temp drops via heatloss
+                comfort_floor_limit = self._room_temp + self._max_floor_temp_diff
+
             # Still apply absolute max temperature constraint
             return min(self._max_floor_temp, comfort_floor_limit)
 
