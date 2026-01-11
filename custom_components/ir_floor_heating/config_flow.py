@@ -32,7 +32,7 @@ from .const import (
     CONF_FLOOR_PID_KD,
     CONF_FLOOR_PID_KI,
     CONF_FLOOR_PID_KP,
-    CONF_FLOOR_SENSOR,
+    CONF_FLOOR_SENSORS,
     CONF_HEATER,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
@@ -45,8 +45,9 @@ from .const import (
     CONF_PID_KD,
     CONF_PID_KI,
     CONF_PID_KP,
+    CONF_POWER_SENSORS,
     CONF_PRECISION,
-    CONF_ROOM_SENSOR,
+    CONF_ROOM_SENSORS,
     CONF_SAFETY_HYSTERESIS,
     CONF_TARGET_TEMP,
     CONF_TEMP_STEP,
@@ -72,13 +73,22 @@ CONFIG_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_NAME, default=DEFAULT_NAME): selector.TextSelector(),
         vol.Required(CONF_HEATER): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="switch")
+            selector.EntitySelectorConfig(domain="switch", multiple=False)
         ),
-        vol.Required(CONF_ROOM_SENSOR): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
+        vol.Required(CONF_ROOM_SENSORS): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor", device_class="temperature", multiple=True
+            )
         ),
-        vol.Required(CONF_FLOOR_SENSOR): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
+        vol.Required(CONF_FLOOR_SENSORS): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor", device_class="temperature", multiple=True
+            )
+        ),
+        vol.Optional(CONF_POWER_SENSORS): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor", device_class="power", multiple=True
+            )
         ),
     }
 )
@@ -87,13 +97,22 @@ CONFIG_SCHEMA = vol.Schema(
 OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HEATER): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="switch")
+            selector.EntitySelectorConfig(domain="switch", multiple=False)
         ),
-        vol.Required(CONF_ROOM_SENSOR): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
+        vol.Required(CONF_ROOM_SENSORS): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor", device_class="temperature", multiple=True
+            )
         ),
-        vol.Required(CONF_FLOOR_SENSOR): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
+        vol.Required(CONF_FLOOR_SENSORS): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor", device_class="temperature", multiple=True
+            )
+        ),
+        vol.Optional(CONF_POWER_SENSORS): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor", device_class="power", multiple=True
+            )
         ),
         vol.Optional(
             CONF_MAX_FLOOR_TEMP, default=DEFAULT_MAX_FLOOR_TEMP

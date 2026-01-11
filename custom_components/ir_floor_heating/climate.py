@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -36,7 +36,6 @@ from homeassistant.core import (
     CoreState,
     Event,
     EventStateChangedData,
-    State,
     callback,
 )
 from homeassistant.helpers.device import async_entity_id_to_device
@@ -46,6 +45,7 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
 )
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -60,6 +60,7 @@ from .const import (
     CONF_FLOOR_PID_KI,
     CONF_FLOOR_PID_KP,
     CONF_FLOOR_SENSOR,
+    CONF_FLOOR_SENSORS,
     CONF_HEATER,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
@@ -72,8 +73,11 @@ from .const import (
     CONF_PID_KD,
     CONF_PID_KI,
     CONF_PID_KP,
+    CONF_POWER_SENSORS,
     CONF_PRECISION,
+    CONF_RELAYS,
     CONF_ROOM_SENSOR,
+    CONF_ROOM_SENSORS,
     CONF_SAFETY_HYSTERESIS,
     CONF_TARGET_TEMP,
     CONF_TEMP_STEP,
@@ -93,6 +97,7 @@ from .const import (
     DEFAULT_SAFETY_HYSTERESIS,
 )
 from .control import ControlConfig, DualPIDController
+from .filters import FusionKalmanFilter
 from .pid import PIDController
 from .tpi import TPIController
 
@@ -111,6 +116,9 @@ class ClimateConfig:
     heater_entity_id: str
     room_sensor_entity_id: str
     floor_sensor_entity_id: str
+    room_sensors: list[str]
+    floor_sensors: list[str]
+    power_sensors: list[str]
     min_temp: float | None
     max_temp: float | None
     target_temp: float | None
@@ -146,12 +154,48 @@ async def async_setup_entry(
     # This ensures compatibility with both initial setup and options updates
     config = config_entry.options if config_entry.options else config_entry.data
 
+    # Helper to ensure we have lists for the new MIMO configuration
+    def get_list(key: str, fallback_key: str | None = None) -> list[str]:
+        val = config.get(key)
+        if isinstance(val, list):
+            return val
+        if val:
+            return [val]
+        if fallback_key:
+            fb_val = config.get(fallback_key)
+            if isinstance(fb_val, list):
+                return fb_val
+            if fb_val:
+                return [fb_val]
+        return []
+
+    room_sensors = get_list(CONF_ROOM_SENSORS, CONF_ROOM_SENSOR)
+    floor_sensors = get_list(CONF_FLOOR_SENSORS, CONF_FLOOR_SENSOR)
+    power_sensors = get_list(CONF_POWER_SENSORS)
+
+    # Handle heater entity (single relay)
+    # Support both old CONF_HEATER and newer CONF_RELAYS (as list)
+    heater_id = config.get(CONF_HEATER)
+    if not heater_id:
+        relays = get_list(CONF_RELAYS)
+        heater_id = relays[0] if relays else ""
+
+    room_sensor_id = config.get(CONF_ROOM_SENSOR) or (
+        room_sensors[0] if room_sensors else ""
+    )
+    floor_sensor_id = config.get(CONF_FLOOR_SENSOR) or (
+        floor_sensors[0] if floor_sensors else ""
+    )
+
     climate_config = ClimateConfig(
         hass=hass,
         name=config.get(CONF_NAME, DEFAULT_NAME),
-        heater_entity_id=config[CONF_HEATER],
-        room_sensor_entity_id=config[CONF_ROOM_SENSOR],
-        floor_sensor_entity_id=config[CONF_FLOOR_SENSOR],
+        heater_entity_id=heater_id,
+        room_sensor_entity_id=room_sensor_id,
+        floor_sensor_entity_id=floor_sensor_id,
+        room_sensors=room_sensors,
+        floor_sensors=floor_sensors,
+        power_sensors=power_sensors,
         min_temp=config.get(CONF_MIN_TEMP),
         max_temp=config.get(CONF_MAX_TEMP),
         target_temp=config.get(CONF_TARGET_TEMP),
@@ -214,6 +258,10 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self.heater_entity_id = config.heater_entity_id
         self.room_sensor_entity_id = config.room_sensor_entity_id
         self.floor_sensor_entity_id = config.floor_sensor_entity_id
+        self.room_sensors = config.room_sensors
+        self.floor_sensors = config.floor_sensors
+        self.power_sensors = config.power_sensors
+        self._last_kf_update = dt_util.utcnow()
 
         # Set up device info from heater entity
         if device_entry := async_entity_id_to_device(
@@ -266,6 +314,13 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         # Relay toggle counter (restored from previous state via RestoreEntity)
         self._relay_toggle_count: int = 0
 
+        # Kalman Filter for sensor fusion
+        self._kf = FusionKalmanFilter(
+            num_floor_sensors=len(self.floor_sensors),
+            num_room_sensors=len(self.room_sensors),
+            dt=config.cycle_period.total_seconds(),
+        )
+
         # PID Controllers (Dual-PID Min-Selector Architecture)
         self._room_pid = PIDController(
             kp=config.pid_kp,
@@ -291,13 +346,15 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self._final_demand_percent: float = 0.0
 
         _LOGGER.info(
-            "IR Floor Heating initialized: '%s' - Room sensor: %s, Floor sensor: %s, "
+            "IR Floor Heating initialized: '%s' - Room sensors: %s, "
+            "Floor sensors: %s, Heater: %s, "
             "Max floor temp: %.1f°C, Max diff: %.1f°C, Cycle period: %ds, "
             "Room PID (Kp=%.1f, Ki=%.1f, Kd=%.1f), "
             "Floor PID (Kp=%.1f, Ki=%.1f, Kd=%.1f)",
             config.name,
-            config.room_sensor_entity_id,
-            config.floor_sensor_entity_id,
+            config.room_sensors,
+            config.floor_sensors,
+            config.heater_entity_id,
             config.max_floor_temp,
             config.max_floor_temp_diff,
             config.cycle_period.total_seconds(),
@@ -313,22 +370,19 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         """Run when entity about to be added."""
         await super().async_added_to_hass()
 
-        # Add sensor listeners
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self.room_sensor_entity_id], self._async_room_sensor_changed
+        # Add sensor listeners for all entities in the MIMO lists
+        entities_to_track = list(
+            set(
+                self.room_sensors
+                + self.floor_sensors
+                + [self.heater_entity_id]
+                + self.power_sensors
             )
         )
+
         self.async_on_remove(
             async_track_state_change_event(
-                self.hass,
-                [self.floor_sensor_entity_id],
-                self._async_floor_sensor_changed,
-            )
-        )
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self.heater_entity_id], self._async_switch_changed
+                self.hass, entities_to_track, self._async_sensor_changed
             )
         )
 
@@ -350,28 +404,14 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         @callback
         def _async_startup(_: Event | None = None) -> None:
             """Init on startup."""
-            room_state = self.hass.states.get(self.room_sensor_entity_id)
-            if room_state and room_state.state not in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
-                self._async_update_room_temp(room_state)
+            # Trigger initial control update to gather all sensor states
+            self.hass.async_create_task(
+                self._async_control_heating(force=True), eager_start=True
+            )
 
-            floor_state = self.hass.states.get(self.floor_sensor_entity_id)
-            if floor_state and floor_state.state not in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
-                self._async_update_floor_temp(floor_state)
-
-            switch_state = self.hass.states.get(self.heater_entity_id)
-            if switch_state and switch_state.state not in (
-                STATE_UNAVAILABLE,
-                STATE_UNKNOWN,
-            ):
-                self.hass.async_create_task(
-                    self._check_switch_initial_state(), eager_start=True
-                )
+            self.hass.async_create_task(
+                self._check_switch_initial_state(), eager_start=True
+            )
 
             self.async_write_ha_state()
 
@@ -538,6 +578,16 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         return round(self._floor_pid.get_integral_error(), 1)
 
     @property
+    def room_temperature(self) -> float | None:
+        """Return the fused room temperature."""
+        return self._room_temp
+
+    @property
+    def floor_temperature(self) -> float | None:
+        """Return the fused floor temperature."""
+        return self._floor_temp
+
+    @property
     def maintain_comfort_limit(self) -> bool:
         """Return whether maintain comfort limit mode is active."""
         return self._maintain_comfort_limit
@@ -583,113 +633,20 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         await self._async_control_heating(force=True)
         self.async_write_ha_state()
 
-    async def _async_room_sensor_changed(
-        self, event: Event[EventStateChangedData]
-    ) -> None:
-        """Handle room temperature changes."""
-        new_state = event.data["new_state"]
-        if new_state is None:
-            return
-
-        if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-            # Sensor unavailable - clear temperature and re-evaluate for safety
-            self._last_room_temp = self._room_temp
-            self._room_temp = None
-            _LOGGER.warning(
-                "Room sensor unavailable - clearing temperature for safety evaluation"
-            )
-        else:
-            self._async_update_room_temp(new_state)
-
-        try:
-            await self._async_control_heating()
-        finally:
-            self.async_write_ha_state()
-
-    async def _async_floor_sensor_changed(
-        self, event: Event[EventStateChangedData]
-    ) -> None:
-        """Handle floor temperature changes."""
-        new_state = event.data["new_state"]
-        if new_state is None:
-            return
-
-        if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-            # Sensor unavailable - clear temperature and re-evaluate for safety
-            self._floor_temp = None
-            _LOGGER.warning(
-                "Floor sensor unavailable - clearing temperature and "
-                "activating safety veto"
-            )
-        else:
-            self._async_update_floor_temp(new_state)
-
-        try:
-            await self._async_control_heating()
-        finally:
-            self.async_write_ha_state()
+    async def _async_sensor_changed(self, _event: Event[EventStateChangedData]) -> None:
+        """Handle any sensor or relay state change."""
+        await self._async_control_heating()
+        self.async_write_ha_state()
 
     async def _check_switch_initial_state(self) -> None:
         """Prevent the device from keep running if HVACMode.OFF."""
         if self._hvac_mode == HVACMode.OFF and self._is_device_active:
             _LOGGER.warning(
-                "The climate mode is OFF, but the switch device is ON. "
+                "The climate mode is OFF, but heater switch is ON. "
                 "Turning off device %s",
                 self.heater_entity_id,
             )
             await self._async_heater_turn_off()
-
-    @callback
-    def _async_switch_changed(self, event: Event[EventStateChangedData]) -> None:
-        """Handle heater switch state changes."""
-        new_state = event.data["new_state"]
-        old_state = event.data["old_state"]
-        if new_state is None:
-            return
-        if old_state is None:
-            self.hass.async_create_task(
-                self._check_switch_initial_state(), eager_start=True
-            )
-        self.async_write_ha_state()
-
-    @callback
-    def _async_update_room_temp(self, state: State) -> None:
-        """Update thermostat with latest room temperature from sensor."""
-        try:
-            room_temp = float(state.state)
-        except ValueError:
-            _LOGGER.exception("Unable to update room temperature from sensor")
-            return
-
-        if not math.isfinite(room_temp):
-            _LOGGER.error(
-                "Unable to update room temperature from sensor: "
-                "Sensor has illegal state %s",
-                state.state,
-            )
-            return
-
-        self._last_room_temp = self._room_temp
-        self._room_temp = room_temp
-
-    @callback
-    def _async_update_floor_temp(self, state: State) -> None:
-        """Update thermostat with latest floor temperature from sensor."""
-        try:
-            floor_temp = float(state.state)
-        except ValueError:
-            _LOGGER.exception("Unable to update floor temperature from sensor")
-            return
-
-        if not math.isfinite(floor_temp):
-            _LOGGER.error(
-                "Unable to update floor temperature from sensor: "
-                "Sensor has illegal state %s",
-                state.state,
-            )
-            return
-
-        self._floor_temp = floor_temp
 
     def _calculate_effective_floor_limit(self) -> float:
         """Calculate effective floor temperature limit based on conditions."""
@@ -765,11 +722,61 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
         return False
 
+    def _get_sensor_values(self, entity_ids: list[str]) -> list[float | None]:
+        """Gather float values from a list of entity IDs."""
+        values: list[float | None] = []
+        for entity_id in entity_ids:
+            state = self.hass.states.get(entity_id)
+            if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                try:
+                    values.append(float(state.state))
+                except ValueError:
+                    values.append(None)
+            else:
+                values.append(None)
+        return values
+
+    def _calculate_total_power(self) -> float:
+        """Sum power from all power sensors or the heater entity."""
+        total_power = 0.0
+
+        if self.power_sensors:
+            power_values = self._get_sensor_values(self.power_sensors)
+            for val in power_values:
+                if val is not None:
+                    total_power += val
+            return total_power
+
+        # Fallback to heater attributes
+        state = self.hass.states.get(self.heater_entity_id)
+        if state:
+            # Extract attribute power or current_power_w
+            p = state.attributes.get("power") or state.attributes.get("current_power_w")
+            if p is not None:
+                with contextlib.suppress(ValueError, TypeError):
+                    total_power += float(p)
+        return total_power
+
     async def _async_control_heating(
         self, _time: datetime | None = None, *, force: bool = False
     ) -> None:
         """Control heating using dual-PID min-selector with TPI actuation."""
         async with self._temp_lock:
+            # 1. Gather data and update Kalman Filter
+            floor_values = self._get_sensor_values(self.floor_sensors)
+            room_values = self._get_sensor_values(self.room_sensors)
+            total_power = self._calculate_total_power()
+
+            now = dt_util.utcnow()
+            dt = (now - self._last_kf_update).total_seconds()
+            self._last_kf_update = now
+
+            self._kf.update(floor_values, room_values, total_power, dt)
+
+            # Update fused temperature values
+            self._floor_temp = self._kf.floor_temp
+            self._room_temp = self._kf.room_temp
+
             # Activate control once we have all required temperatures
             if not self._active and None not in (
                 self._room_temp,
@@ -797,50 +804,52 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                 self._floor_demand_percent = 0.0
                 self._final_demand_percent = 0.0
                 _LOGGER.debug("Safety veto active - demand set to 0%%")
-            elif (
-                self._room_temp is not None
-                and self._target_temp is not None
-                and self._floor_temp is not None
-            ):
-                result = self._dual_pid.calculate(
-                    room_temp=self._room_temp,
-                    target_room=self._target_temp,
-                    floor_temp=self._floor_temp,
-                    config=self._control_config,
-                )
-                self._room_demand_percent = result.room_demand
-                self._floor_demand_percent = result.floor_demand
-                self._final_demand_percent = result.final_demand
-
-                if result.final_demand < result.room_demand:
-                    _LOGGER.debug(
-                        "Room PID restricted by floor limit: "
-                        "room_demand=%.1f%%, floor_demand=%.1f%%, final=%.1f%%",
-                        self._room_demand_percent,
-                        self._floor_demand_percent,
-                        self._final_demand_percent,
-                    )
-                elif (
-                    self._maintain_comfort_limit
-                    and self._room_temp >= self._target_temp
-                ):
-                    _LOGGER.debug(
-                        "Maintain comfort active: room_temp(%.1f) >= target(%.1f), "
-                        "using floor demand=%.1f%%",
-                        self._room_temp,
-                        self._target_temp,
-                        self._final_demand_percent,
-                    )
             else:
-                self._room_demand_percent = 0.0
-                self._floor_demand_percent = 0.0
-                self._final_demand_percent = 0.0
+                self._calculate_demand()
 
             self._demand_percent = self._final_demand_percent
 
             # Force immediate update if requested
             if force:
                 self._tpi_controller.reset_cycle()
+
+    def _calculate_demand(self) -> None:
+        """Calculate PID demand based on current temperatures."""
+        if (
+            self._room_temp is not None
+            and self._target_temp is not None
+            and self._floor_temp is not None
+        ):
+            result = self._dual_pid.calculate(
+                room_temp=self._room_temp,
+                target_room=self._target_temp,
+                floor_temp=self._floor_temp,
+                config=self._control_config,
+            )
+            self._room_demand_percent = result.room_demand
+            self._floor_demand_percent = result.floor_demand
+            self._final_demand_percent = result.final_demand
+
+            if result.final_demand < result.room_demand:
+                _LOGGER.debug(
+                    "Room PID restricted by floor limit: "
+                    "room_demand=%.1f%%, floor_demand=%.1f%%, final=%.1f%%",
+                    self._room_demand_percent,
+                    self._floor_demand_percent,
+                    self._final_demand_percent,
+                )
+            elif self._maintain_comfort_limit and self._room_temp >= self._target_temp:
+                _LOGGER.debug(
+                    "Maintain comfort active: room_temp(%.1f) >= target(%.1f), "
+                    "using floor demand=%.1f%%",
+                    self._room_temp,
+                    self._target_temp,
+                    self._final_demand_percent,
+                )
+        else:
+            self._room_demand_percent = 0.0
+            self._floor_demand_percent = 0.0
+            self._final_demand_percent = 0.0
 
     async def _async_tpi_cycle(self, _time: datetime | None = None) -> None:
         """Execute Time Proportional & Integral (TPI) control cycle."""
@@ -872,10 +881,10 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
     @property
     def _is_device_active(self) -> bool | None:
-        """Check if the toggleable device is currently active."""
-        if not self.hass.states.get(self.heater_entity_id):
-            return None
-        return self.hass.states.is_state(self.heater_entity_id, STATE_ON)
+        """Check if the heater device is currently active."""
+        if state := self.hass.states.get(self.heater_entity_id):
+            return state.state == STATE_ON
+        return None
 
     async def _async_heater_turn_on(self) -> None:
         """Turn heater toggleable device on."""

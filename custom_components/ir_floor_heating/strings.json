@@ -6,9 +6,10 @@
         "description": "Configure dual-sensor IR floor heating control with Time Proportional & Integral (TPI) algorithm",
         "data": {
           "name": "Name",
-          "heater": "Heater switch",
-          "room_sensor": "Room temperature sensor",
-          "floor_sensor": "Floor temperature sensor"
+          "relays": "Heater switch",
+          "room_sensors": "Room temperature sensors",
+          "floor_sensors": "Floor temperature sensors",
+          "power_sensors": "Power/Energy sensors"
         }
       }
     },
@@ -26,9 +27,10 @@
         "title": "Configure IR floor heating",
         "description": "Advanced configuration for dual-sensor TPI control",
         "data": {
-          "heater": "Heater switch",
-          "room_sensor": "Room temperature sensor",
-          "floor_sensor": "Floor temperature sensor",
+          "relays": "Heater switch",
+          "room_sensors": "Room temperature sensors",
+          "floor_sensors": "Floor temperature sensors",
+          "power_sensors": "Power/Energy sensors",
           "max_floor_temp": "Absolute maximum floor temperature",
           "max_floor_temp_diff": "Maximum floor-room temperature differential",
           "min_temp": "Minimum setpoint temperature",
@@ -116,6 +118,12 @@
       },
       "relay_toggle_count": {
         "name": "Relay toggle count"
+      },
+      "fused_room_temperature": {
+        "name": "Fused room temperature"
+      },
+      "fused_floor_temperature": {
+        "name": "Fused floor temperature"
       }
     },
     "binary_sensor": {
