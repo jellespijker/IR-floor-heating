@@ -29,6 +29,7 @@ class ControlConfig:
     max_floor_temp: float
     comfort_offset: float
     maintain_comfort: bool
+    safety_hysteresis: float = 0.25
     boost_mode: bool = False
     boost_temp_diff: float = 1.5
 
@@ -70,7 +71,10 @@ class DualPIDController:
                     floor_target = room_temp + min(relaxed_diff, max_boost_offset)
 
         # Apply absolute maximum guard
-        return min(config.max_floor_temp, floor_target)
+        if floor_target >= config.max_floor_temp:
+            return config.max_floor_temp - config.safety_hysteresis
+
+        return floor_target
 
     def calculate(
         self,

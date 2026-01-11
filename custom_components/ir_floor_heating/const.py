@@ -34,6 +34,8 @@ CONF_FLOOR_PID_KI = "floor_pid_ki"
 CONF_FLOOR_PID_KD = "floor_pid_kd"
 CONF_SAFETY_HYSTERESIS = "safety_hysteresis"
 CONF_MAINTAIN_COMFORT_LIMIT = "maintain_comfort_limit"
+CONF_SAFETY_BUDGET_CAPACITY = "safety_budget_capacity"
+CONF_SAFETY_BUDGET_INTERVAL = "safety_budget_interval"
 
 # Default values
 DEFAULT_NAME = "IR floor heating"
@@ -49,6 +51,8 @@ DEFAULT_SAFETY_HYSTERESIS = (
     0.25  # °C - Hysteresis for safety limit to prevent chattering
 )
 DEFAULT_MAINTAIN_COMFORT_LIMIT = False  # Disabled by default
+DEFAULT_SAFETY_BUDGET_CAPACITY = 2.0  # tokens (1 cycle = 2 toggles)
+DEFAULT_SAFETY_BUDGET_INTERVAL = 300  # seconds per token (12 tokens/hour)
 # PID tuning defaults (optimized for floor heating)
 DEFAULT_PID_KP = 80.0  # Proportional gain
 DEFAULT_PID_KI = 2.0  # Integral gain

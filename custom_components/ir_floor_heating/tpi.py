@@ -94,3 +94,46 @@ class TPIController:
             time_in_cycle = time_in_cycle % cycle_period
 
         return {"time_in_cycle": time_in_cycle, "cycle_period": cycle_period}
+
+
+class BudgetBucket:
+    """Budget bucket for rate limiting relay toggles."""
+
+    def __init__(self, capacity: float, refill_rate: float) -> None:
+        """
+        Initialize budget bucket.
+
+        Args:
+            capacity: Maximum number of tokens the bucket can hold.
+            refill_rate: Number of tokens added per second.
+
+        """
+        self.capacity = capacity
+        self.refill_rate = refill_rate
+        self.tokens = capacity
+        self.last_update = datetime.now(UTC)
+
+    def consume(self, amount: float = 1.0, *, force: bool = False) -> bool:
+        """
+        Consume tokens from the bucket.
+
+        Args:
+            amount: Number of tokens to consume.
+            force: If True, consume tokens even if it makes the balance negative.
+
+        Returns:
+            True if tokens were consumed, False otherwise.
+
+        """
+        self._refill()
+        if force or self.tokens >= amount:
+            self.tokens -= amount
+            return True
+        return False
+
+    def _refill(self) -> None:
+        """Refill tokens based on elapsed time."""
+        now = datetime.now(UTC)
+        delta = (now - self.last_update).total_seconds()
+        self.tokens = min(self.capacity, self.tokens + delta * self.refill_rate)
+        self.last_update = now

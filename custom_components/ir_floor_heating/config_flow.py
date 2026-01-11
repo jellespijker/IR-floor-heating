@@ -48,6 +48,8 @@ from .const import (
     CONF_POWER_SENSORS,
     CONF_PRECISION,
     CONF_ROOM_SENSORS,
+    CONF_SAFETY_BUDGET_CAPACITY,
+    CONF_SAFETY_BUDGET_INTERVAL,
     CONF_SAFETY_HYSTERESIS,
     CONF_TARGET_TEMP,
     CONF_TEMP_STEP,
@@ -64,6 +66,8 @@ from .const import (
     DEFAULT_PID_KD,
     DEFAULT_PID_KI,
     DEFAULT_PID_KP,
+    DEFAULT_SAFETY_BUDGET_CAPACITY,
+    DEFAULT_SAFETY_BUDGET_INTERVAL,
     DEFAULT_SAFETY_HYSTERESIS,
     DOMAIN,
 )
@@ -243,6 +247,27 @@ OPTIONS_SCHEMA = vol.Schema(
                 max=2.0,
                 step=0.1,
                 unit_of_measurement="°C",
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(
+            CONF_SAFETY_BUDGET_CAPACITY, default=DEFAULT_SAFETY_BUDGET_CAPACITY
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=1.0,
+                max=20.0,
+                step=1.0,
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(
+            CONF_SAFETY_BUDGET_INTERVAL, default=DEFAULT_SAFETY_BUDGET_INTERVAL
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=30,
+                max=3600,
+                step=30,
+                unit_of_measurement="seconds",
                 mode=selector.NumberSelectorMode.BOX,
             )
         ),

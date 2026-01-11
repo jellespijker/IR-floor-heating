@@ -44,6 +44,8 @@
           "target_temp_step": "Target temperature step",
           "boost_mode": "Enable boost mode",
           "boost_temp_diff": "Boost mode activation threshold",
+          "safety_budget_capacity": "Safety toggle budget capacity",
+          "safety_budget_interval": "Safety toggle budget refill interval",
           "safety_hysteresis": "Safety limit hysteresis",
           "pid_kp": "PID proportional gain (Kp)",
           "pid_ki": "PID integral gain (Ki)",
@@ -57,6 +59,8 @@
           "cycle_period": "TPI cycle duration. Standard: 900 seconds (15 min = 4 cycles/hour) for 10+ year relay life",
           "boost_mode": "Temporarily relax differential limit when room is far from target to enable faster warm-up",
           "boost_temp_diff": "Temperature error threshold to activate boost mode. When (target - room) > this value, differential limit is relaxed",
+          "safety_budget_capacity": "Maximum number of safety-induced relay toggles that can occur in a burst. Each toggle (ON or OFF) consumes 1 unit.",
+          "safety_budget_interval": "Time required to refill one toggle unit in the budget. This determines the average allowed rate of safety toggles.",
           "safety_hysteresis": "Hysteresis band for safety limits. Prevents rapid on/off cycling when temperature is near the limit. Typical: 0.5°C",
           "pid_kp": "Proportional gain: Response to current temperature error. Higher = faster response but may overshoot. Default: 10.0",
           "pid_ki": "Integral gain: Eliminates steady-state error over time. Higher = faster elimination but may cause overshoot. Default: 0.5",
@@ -87,6 +91,9 @@
           },
           "demand_percent": {
             "name": "Heating demand"
+          },
+          "safety_budget_tokens": {
+            "name": "Safety toggle budget"
           },
           "safety_veto_active": {
             "name": "Safety veto active"

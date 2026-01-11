@@ -78,6 +78,8 @@ from .const import (
     CONF_RELAYS,
     CONF_ROOM_SENSOR,
     CONF_ROOM_SENSORS,
+    CONF_SAFETY_BUDGET_CAPACITY,
+    CONF_SAFETY_BUDGET_INTERVAL,
     CONF_SAFETY_HYSTERESIS,
     CONF_TARGET_TEMP,
     CONF_TEMP_STEP,
@@ -94,12 +96,14 @@ from .const import (
     DEFAULT_PID_KD,
     DEFAULT_PID_KI,
     DEFAULT_PID_KP,
+    DEFAULT_SAFETY_BUDGET_CAPACITY,
+    DEFAULT_SAFETY_BUDGET_INTERVAL,
     DEFAULT_SAFETY_HYSTERESIS,
 )
 from .control import ControlConfig, DualPIDController
 from .filters import FusionKalmanFilter
 from .pid import PIDController
-from .tpi import TPIController
+from .tpi import BudgetBucket, TPIController
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,6 +139,8 @@ class ClimateConfig:
     boost_mode: bool
     boost_temp_diff: float
     safety_hysteresis: float
+    safety_budget_capacity: float
+    safety_budget_interval: float
     pid_kp: float
     pid_ki: float
     pid_kd: float
@@ -222,6 +228,12 @@ async def async_setup_entry(
         boost_mode=config.get(CONF_BOOST_MODE, True),
         boost_temp_diff=config.get(CONF_BOOST_TEMP_DIFF, DEFAULT_BOOST_TEMP_DIFF),
         safety_hysteresis=config.get(CONF_SAFETY_HYSTERESIS, DEFAULT_SAFETY_HYSTERESIS),
+        safety_budget_capacity=config.get(
+            CONF_SAFETY_BUDGET_CAPACITY, DEFAULT_SAFETY_BUDGET_CAPACITY
+        ),
+        safety_budget_interval=config.get(
+            CONF_SAFETY_BUDGET_INTERVAL, DEFAULT_SAFETY_BUDGET_INTERVAL
+        ),
         pid_kp=config.get(CONF_PID_KP, DEFAULT_PID_KP),
         pid_ki=config.get(CONF_PID_KI, DEFAULT_PID_KI),
         pid_kd=config.get(CONF_PID_KD, DEFAULT_PID_KD),
@@ -338,6 +350,10 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self._tpi_controller = TPIController(
             cycle_period=config.cycle_period,
             min_cycle_duration=config.min_cycle_duration,
+        )
+        self._safety_budget = BudgetBucket(
+            capacity=config.safety_budget_capacity,
+            refill_rate=1.0 / config.safety_budget_interval,
         )
 
         # PID demand values
@@ -523,6 +539,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         if self._room_temp is not None:
             effective_limit = self._calculate_effective_floor_limit()
             attrs["effective_floor_limit"] = round(effective_limit, 1)
+            attrs["safety_budget_tokens"] = round(self._safety_budget.tokens, 2)
 
         return attrs
 
@@ -599,6 +616,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             max_floor_temp=self._max_floor_temp,
             comfort_offset=self._max_floor_temp_diff,
             maintain_comfort=self._maintain_comfort_limit,
+            safety_hysteresis=self._safety_hysteresis,
             boost_mode=self._boost_mode,
             boost_temp_diff=self._boost_temp_diff,
         )
@@ -683,44 +701,65 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             )
             return True
 
-        effective_limit = self._calculate_effective_floor_limit()
+        # Use absolute max floor temp for safety veto, not the effective PID limit
+        limit = self._max_floor_temp
 
-        # Use hysteresis to prevent chattering
-        if self._floor_temp >= effective_limit:
-            if not self._safety_veto_active:
+        # Determine if veto SHOULD be active based on temperature
+        should_veto = self._safety_veto_active
+        if self._floor_temp >= limit:
+            should_veto = True
+        elif not bypass_hysteresis and self._floor_temp > (
+            limit - self._safety_hysteresis
+        ):
+            # In hysteresis band: maintain current decision
+            should_veto = self._safety_veto_active
+        else:
+            # Below hysteresis band - release veto
+            should_veto = False
+
+        # Apply budget bucket for transitions to protect relay
+        if should_veto != self._safety_veto_active:
+            if should_veto:
+                # Engaging veto (Turning OFF) - Always allowed for safety,
+                # but consumes budget
+                self._safety_budget.consume(1.0, force=True)
                 _LOGGER.warning(
                     "SAFETY VETO ENGAGED: Floor temp %.1f°C >= "
-                    "Effective limit %.1f°C - Heating OFF",
+                    "Max limit %.1f°C - Heating OFF",
                     self._floor_temp,
-                    effective_limit,
+                    limit,
+                )
+                return True
+
+            # Releasing veto (Turning ON) - Subject to budget
+            if self._safety_budget.consume(1.0):
+                _LOGGER.info(
+                    "SAFETY VETO RELEASED: Floor temp %.1f°C < "
+                    "(Limit %.1f°C - Hysteresis %.1f°C) - Heating allowed",
+                    self._floor_temp,
+                    limit,
+                    self._safety_hysteresis,
+                )
+                return False
+
+            # No budget available - delay release
+            if self._safety_veto_active:
+                _LOGGER.debug(
+                    "SAFETY VETO RELEASE DELAYED: Floor temp %.1f°C "
+                    "is safe but relay toggle budget exceeded",
+                    self._floor_temp,
                 )
             return True
 
-        if not bypass_hysteresis and self._floor_temp > (
-            effective_limit - self._safety_hysteresis
-        ):
-            # In hysteresis band: maintain previous veto state
-            if self._safety_veto_active:
-                _LOGGER.debug(
-                    "SAFETY VETO MAINTAINED: Floor temp %.1f°C "
-                    "in hysteresis band (%.1f°C to %.1f°C)",
-                    self._floor_temp,
-                    effective_limit - self._safety_hysteresis,
-                    effective_limit,
-                )
-            return self._safety_veto_active
-
-        # Below hysteresis band - release veto
-        if self._safety_veto_active:
-            _LOGGER.info(
-                "SAFETY VETO RELEASED: Floor temp %.1f°C < "
-                "(Limit %.1f°C - Hysteresis %.1f°C) - Heating allowed",
+        # No state change requested, but if we are in veto, log reason if in debug
+        if self._safety_veto_active and not should_veto:
+            # This happens when should_veto is False but we returned True due to budget
+            _LOGGER.debug(
+                "SAFETY VETO MAINTAINED (Budget): Floor temp %.1f°C",
                 self._floor_temp,
-                effective_limit,
-                self._safety_hysteresis,
             )
 
-        return False
+        return self._safety_veto_active
 
     def _get_sensor_values(self, entity_ids: list[str]) -> list[float | None]:
         """Gather float values from a list of entity IDs."""
