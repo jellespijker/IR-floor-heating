@@ -72,52 +72,46 @@ from .const import (
     DOMAIN,
 )
 
+# Common selectors used in both initial setup and options
+COMMON_SELECTORS = {
+    CONF_HEATER: selector.EntitySelector(
+        selector.EntitySelectorConfig(domain="switch", multiple=False)
+    ),
+    CONF_ROOM_SENSORS: selector.EntitySelector(
+        selector.EntitySelectorConfig(
+            domain="sensor", device_class="temperature", multiple=True
+        )
+    ),
+    CONF_FLOOR_SENSORS: selector.EntitySelector(
+        selector.EntitySelectorConfig(
+            domain="sensor", device_class="temperature", multiple=True
+        )
+    ),
+    CONF_POWER_SENSORS: selector.EntitySelector(
+        selector.EntitySelectorConfig(
+            domain="sensor", device_class="power", multiple=True
+        )
+    ),
+}
+
 # Configuration schema for the initial setup
 CONFIG_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_NAME, default=DEFAULT_NAME): selector.TextSelector(),
-        vol.Required(CONF_HEATER): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="switch", multiple=False)
-        ),
-        vol.Required(CONF_ROOM_SENSORS): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain="sensor", device_class="temperature", multiple=True
-            )
-        ),
-        vol.Required(CONF_FLOOR_SENSORS): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain="sensor", device_class="temperature", multiple=True
-            )
-        ),
-        vol.Optional(CONF_POWER_SENSORS): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain="sensor", device_class="power", multiple=True
-            )
-        ),
+        vol.Required(CONF_HEATER): COMMON_SELECTORS[CONF_HEATER],
+        vol.Required(CONF_ROOM_SENSORS): COMMON_SELECTORS[CONF_ROOM_SENSORS],
+        vol.Required(CONF_FLOOR_SENSORS): COMMON_SELECTORS[CONF_FLOOR_SENSORS],
+        vol.Optional(CONF_POWER_SENSORS): COMMON_SELECTORS[CONF_POWER_SENSORS],
     }
 )
 
 # Options schema for advanced configuration
 OPTIONS_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_HEATER): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="switch", multiple=False)
-        ),
-        vol.Required(CONF_ROOM_SENSORS): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain="sensor", device_class="temperature", multiple=True
-            )
-        ),
-        vol.Required(CONF_FLOOR_SENSORS): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain="sensor", device_class="temperature", multiple=True
-            )
-        ),
-        vol.Optional(CONF_POWER_SENSORS): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain="sensor", device_class="power", multiple=True
-            )
-        ),
+        vol.Required(CONF_HEATER): COMMON_SELECTORS[CONF_HEATER],
+        vol.Required(CONF_ROOM_SENSORS): COMMON_SELECTORS[CONF_ROOM_SENSORS],
+        vol.Required(CONF_FLOOR_SENSORS): COMMON_SELECTORS[CONF_FLOOR_SENSORS],
+        vol.Optional(CONF_POWER_SENSORS): COMMON_SELECTORS[CONF_POWER_SENSORS],
         vol.Optional(
             CONF_MAX_FLOOR_TEMP, default=DEFAULT_MAX_FLOOR_TEMP
         ): selector.NumberSelector(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -25,8 +24,6 @@ from homeassistant.const import (
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
     STATE_ON,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
     UnitOfTemperature,
 )
 from homeassistant.core import (
@@ -103,6 +100,7 @@ from .const import (
 from .control import ControlConfig, DualPIDController
 from .filters import FusionKalmanFilter
 from .pid import PIDController
+from .sensor_manager import SensorManager
 from .tpi import BudgetBucket, TPIController
 
 _LOGGER = logging.getLogger(__name__)
@@ -149,6 +147,97 @@ class ClimateConfig:
     floor_pid_kd: float
     maintain_comfort_limit: bool
 
+    @classmethod
+    def from_entry(cls, hass: HomeAssistant, entry: ConfigEntry) -> ClimateConfig:
+        """Create ClimateConfig from a ConfigEntry."""
+        # Read from options if available, otherwise fall back to data
+        config = entry.options if entry.options else entry.data
+
+        def get_list(key: str, fallback_key: str | None = None) -> list[str]:
+            val = config.get(key)
+            if isinstance(val, list):
+                return val
+            if val:
+                return [val]
+            if fallback_key:
+                fb_val = config.get(fallback_key)
+                if isinstance(fb_val, list):
+                    return fb_val
+                if fb_val:
+                    return [fb_val]
+            return []
+
+        room_sensors = get_list(CONF_ROOM_SENSORS, CONF_ROOM_SENSOR)
+        floor_sensors = get_list(CONF_FLOOR_SENSORS, CONF_FLOOR_SENSOR)
+        power_sensors = get_list(CONF_POWER_SENSORS)
+
+        # Handle heater entity (single relay)
+        heater_id = config.get(CONF_HEATER)
+        if not heater_id:
+            relays = get_list(CONF_RELAYS)
+            heater_id = relays[0] if relays else ""
+
+        room_sensor_id = config.get(CONF_ROOM_SENSOR) or (
+            room_sensors[0] if room_sensors else ""
+        )
+        floor_sensor_id = config.get(CONF_FLOOR_SENSOR) or (
+            floor_sensors[0] if floor_sensors else ""
+        )
+
+        return cls(
+            hass=hass,
+            name=config.get(CONF_NAME, DEFAULT_NAME),
+            heater_entity_id=heater_id,
+            room_sensor_entity_id=room_sensor_id,
+            floor_sensor_entity_id=floor_sensor_id,
+            room_sensors=room_sensors,
+            floor_sensors=floor_sensors,
+            power_sensors=power_sensors,
+            min_temp=config.get(CONF_MIN_TEMP),
+            max_temp=config.get(CONF_MAX_TEMP),
+            target_temp=config.get(CONF_TARGET_TEMP),
+            max_floor_temp=config.get(CONF_MAX_FLOOR_TEMP, DEFAULT_MAX_FLOOR_TEMP),
+            max_floor_temp_diff=config.get(
+                CONF_MAX_FLOOR_TEMP_DIFF, DEFAULT_MAX_FLOOR_TEMP_DIFF
+            ),
+            min_cycle_duration=timedelta(
+                seconds=config.get(CONF_MIN_CYCLE_DURATION, DEFAULT_MIN_CYCLE_DURATION)
+            ),
+            cycle_period=timedelta(
+                seconds=config.get(CONF_CYCLE_PERIOD, DEFAULT_CYCLE_PERIOD)
+            ),
+            keep_alive=(
+                timedelta(seconds=config.get(CONF_KEEP_ALIVE))
+                if config.get(CONF_KEEP_ALIVE)
+                else None
+            ),
+            initial_hvac_mode=config.get(CONF_INITIAL_HVAC_MODE),
+            precision=config.get(CONF_PRECISION),
+            target_temperature_step=config.get(CONF_TEMP_STEP),
+            unit=hass.config.units.temperature_unit,
+            unique_id=entry.entry_id,
+            boost_mode=config.get(CONF_BOOST_MODE, True),
+            boost_temp_diff=config.get(CONF_BOOST_TEMP_DIFF, DEFAULT_BOOST_TEMP_DIFF),
+            safety_hysteresis=config.get(
+                CONF_SAFETY_HYSTERESIS, DEFAULT_SAFETY_HYSTERESIS
+            ),
+            safety_budget_capacity=config.get(
+                CONF_SAFETY_BUDGET_CAPACITY, DEFAULT_SAFETY_BUDGET_CAPACITY
+            ),
+            safety_budget_interval=config.get(
+                CONF_SAFETY_BUDGET_INTERVAL, DEFAULT_SAFETY_BUDGET_INTERVAL
+            ),
+            pid_kp=config.get(CONF_PID_KP, DEFAULT_PID_KP),
+            pid_ki=config.get(CONF_PID_KI, DEFAULT_PID_KI),
+            pid_kd=config.get(CONF_PID_KD, DEFAULT_PID_KD),
+            floor_pid_kp=config.get(CONF_FLOOR_PID_KP, DEFAULT_FLOOR_PID_KP),
+            floor_pid_ki=config.get(CONF_FLOOR_PID_KI, DEFAULT_FLOOR_PID_KI),
+            floor_pid_kd=config.get(CONF_FLOOR_PID_KD, DEFAULT_FLOOR_PID_KD),
+            maintain_comfort_limit=config.get(
+                CONF_MAINTAIN_COMFORT_LIMIT, DEFAULT_MAINTAIN_COMFORT_LIMIT
+            ),
+        )
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -156,95 +245,7 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the IR floor heating climate entity from a config entry."""
-    # Read from options if available, otherwise fall back to data
-    # This ensures compatibility with both initial setup and options updates
-    config = config_entry.options if config_entry.options else config_entry.data
-
-    # Helper to ensure we have lists for the new MIMO configuration
-    def get_list(key: str, fallback_key: str | None = None) -> list[str]:
-        val = config.get(key)
-        if isinstance(val, list):
-            return val
-        if val:
-            return [val]
-        if fallback_key:
-            fb_val = config.get(fallback_key)
-            if isinstance(fb_val, list):
-                return fb_val
-            if fb_val:
-                return [fb_val]
-        return []
-
-    room_sensors = get_list(CONF_ROOM_SENSORS, CONF_ROOM_SENSOR)
-    floor_sensors = get_list(CONF_FLOOR_SENSORS, CONF_FLOOR_SENSOR)
-    power_sensors = get_list(CONF_POWER_SENSORS)
-
-    # Handle heater entity (single relay)
-    # Support both old CONF_HEATER and newer CONF_RELAYS (as list)
-    heater_id = config.get(CONF_HEATER)
-    if not heater_id:
-        relays = get_list(CONF_RELAYS)
-        heater_id = relays[0] if relays else ""
-
-    room_sensor_id = config.get(CONF_ROOM_SENSOR) or (
-        room_sensors[0] if room_sensors else ""
-    )
-    floor_sensor_id = config.get(CONF_FLOOR_SENSOR) or (
-        floor_sensors[0] if floor_sensors else ""
-    )
-
-    climate_config = ClimateConfig(
-        hass=hass,
-        name=config.get(CONF_NAME, DEFAULT_NAME),
-        heater_entity_id=heater_id,
-        room_sensor_entity_id=room_sensor_id,
-        floor_sensor_entity_id=floor_sensor_id,
-        room_sensors=room_sensors,
-        floor_sensors=floor_sensors,
-        power_sensors=power_sensors,
-        min_temp=config.get(CONF_MIN_TEMP),
-        max_temp=config.get(CONF_MAX_TEMP),
-        target_temp=config.get(CONF_TARGET_TEMP),
-        max_floor_temp=config.get(CONF_MAX_FLOOR_TEMP, DEFAULT_MAX_FLOOR_TEMP),
-        max_floor_temp_diff=config.get(
-            CONF_MAX_FLOOR_TEMP_DIFF, DEFAULT_MAX_FLOOR_TEMP_DIFF
-        ),
-        min_cycle_duration=timedelta(
-            seconds=config.get(CONF_MIN_CYCLE_DURATION, DEFAULT_MIN_CYCLE_DURATION)
-        ),
-        cycle_period=timedelta(
-            seconds=config.get(CONF_CYCLE_PERIOD, DEFAULT_CYCLE_PERIOD)
-        ),
-        keep_alive=(
-            timedelta(seconds=config.get(CONF_KEEP_ALIVE))
-            if config.get(CONF_KEEP_ALIVE)
-            else None
-        ),
-        initial_hvac_mode=config.get(CONF_INITIAL_HVAC_MODE),
-        precision=config.get(CONF_PRECISION),
-        target_temperature_step=config.get(CONF_TEMP_STEP),
-        unit=hass.config.units.temperature_unit,
-        unique_id=config_entry.entry_id,
-        boost_mode=config.get(CONF_BOOST_MODE, True),
-        boost_temp_diff=config.get(CONF_BOOST_TEMP_DIFF, DEFAULT_BOOST_TEMP_DIFF),
-        safety_hysteresis=config.get(CONF_SAFETY_HYSTERESIS, DEFAULT_SAFETY_HYSTERESIS),
-        safety_budget_capacity=config.get(
-            CONF_SAFETY_BUDGET_CAPACITY, DEFAULT_SAFETY_BUDGET_CAPACITY
-        ),
-        safety_budget_interval=config.get(
-            CONF_SAFETY_BUDGET_INTERVAL, DEFAULT_SAFETY_BUDGET_INTERVAL
-        ),
-        pid_kp=config.get(CONF_PID_KP, DEFAULT_PID_KP),
-        pid_ki=config.get(CONF_PID_KI, DEFAULT_PID_KI),
-        pid_kd=config.get(CONF_PID_KD, DEFAULT_PID_KD),
-        floor_pid_kp=config.get(CONF_FLOOR_PID_KP, DEFAULT_FLOOR_PID_KP),
-        floor_pid_ki=config.get(CONF_FLOOR_PID_KI, DEFAULT_FLOOR_PID_KI),
-        floor_pid_kd=config.get(CONF_FLOOR_PID_KD, DEFAULT_FLOOR_PID_KD),
-        maintain_comfort_limit=config.get(
-            CONF_MAINTAIN_COMFORT_LIMIT, DEFAULT_MAINTAIN_COMFORT_LIMIT
-        ),
-    )
-
+    climate_config = ClimateConfig.from_entry(hass, config_entry)
     climate_entity = IRFloorHeatingClimate(climate_config)
 
     # Store climate entity in runtime_data for access by sensor platform
@@ -298,6 +299,15 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self._boost_temp_diff = config.boost_temp_diff
         self._safety_hysteresis = config.safety_hysteresis
         self._maintain_comfort_limit = config.maintain_comfort_limit
+
+        # Sensor Manager
+        self._sensor_manager = SensorManager(
+            config.hass,
+            config.room_sensors,
+            config.floor_sensors,
+            config.power_sensors,
+            config.heater_entity_id,
+        )
 
         # State variables
         self._hvac_mode = config.initial_hvac_mode
@@ -761,50 +771,15 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
         return self._safety_veto_active
 
-    def _get_sensor_values(self, entity_ids: list[str]) -> list[float | None]:
-        """Gather float values from a list of entity IDs."""
-        values: list[float | None] = []
-        for entity_id in entity_ids:
-            state = self.hass.states.get(entity_id)
-            if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-                try:
-                    values.append(float(state.state))
-                except ValueError:
-                    values.append(None)
-            else:
-                values.append(None)
-        return values
-
-    def _calculate_total_power(self) -> float:
-        """Sum power from all power sensors or the heater entity."""
-        total_power = 0.0
-
-        if self.power_sensors:
-            power_values = self._get_sensor_values(self.power_sensors)
-            for val in power_values:
-                if val is not None:
-                    total_power += val
-            return total_power
-
-        # Fallback to heater attributes
-        state = self.hass.states.get(self.heater_entity_id)
-        if state:
-            # Extract attribute power or current_power_w
-            p = state.attributes.get("power") or state.attributes.get("current_power_w")
-            if p is not None:
-                with contextlib.suppress(ValueError, TypeError):
-                    total_power += float(p)
-        return total_power
-
     async def _async_control_heating(
         self, _time: datetime | None = None, *, force: bool = False
     ) -> None:
         """Control heating using dual-PID min-selector with TPI actuation."""
         async with self._temp_lock:
             # 1. Gather data and update Kalman Filter
-            floor_values = self._get_sensor_values(self.floor_sensors)
-            room_values = self._get_sensor_values(self.room_sensors)
-            total_power = self._calculate_total_power()
+            floor_values = self._sensor_manager.get_floor_temperatures()
+            room_values = self._sensor_manager.get_room_temperatures()
+            total_power = self._sensor_manager.calculate_total_power()
 
             now = dt_util.utcnow()
             dt = (now - self._last_kf_update).total_seconds()
