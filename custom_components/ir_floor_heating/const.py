@@ -61,3 +61,4 @@ DEFAULT_PID_KD = 15.0  # Derivative gain
 DEFAULT_FLOOR_PID_KP = 20.0  # Floor limiter proportional gain
 DEFAULT_FLOOR_PID_KI = 0.5  # Floor limiter integral gain
 DEFAULT_FLOOR_PID_KD = 10.0  # Floor limiter derivative gain
+MAX_DT_FOR_KALMAN_UPDATE = 3600  # Max seconds for Kalman filter update before reset

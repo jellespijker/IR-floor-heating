@@ -96,6 +96,7 @@ from .const import (
     DEFAULT_SAFETY_BUDGET_CAPACITY,
     DEFAULT_SAFETY_BUDGET_INTERVAL,
     DEFAULT_SAFETY_HYSTERESIS,
+    MAX_DT_FOR_KALMAN_UPDATE,
 )
 from .control import ControlConfig, DualPIDController
 from .filters import FusionKalmanFilter
@@ -786,7 +787,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             self._last_kf_update = now
 
             # Guard against non-positive or unreasonable dt values
-            if dt <= 0 or dt > 3600:
+            if dt <= 0 or dt > MAX_DT_FOR_KALMAN_UPDATE:
                 _LOGGER.debug(
                     "Invalid dt %.3f for Kalman filter update, using fallback dt=1.0",
                     dt,
