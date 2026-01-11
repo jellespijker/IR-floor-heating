@@ -94,7 +94,7 @@ class TPIController:
             # Not enough time has passed, maintain previous state
             return self._last_relay_state
 
-        # State unchanged, update last change time and return current state
+        # State unchanged, return current state
         return self._last_relay_state
 
     def reset_cycle(self) -> None:

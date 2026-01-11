@@ -785,6 +785,13 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             dt = (now - self._last_kf_update).total_seconds()
             self._last_kf_update = now
 
+            # Guard against non-positive or unreasonable dt values
+            if dt <= 0 or dt > 3600:
+                _LOGGER.debug(
+                    "Invalid dt %.3f for Kalman filter update, using fallback dt=1.0",
+                    dt,
+                )
+                dt = 1.0
             self._kf.update(floor_values, room_values, total_power, dt)
 
             # Update fused temperature values
