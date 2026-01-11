@@ -45,6 +45,8 @@ async def async_setup_entry(
             IRFloorHeatingRoomIntegralErrorSensor(climate_entity, config_entry),
             IRFloorHeatingFloorIntegralErrorSensor(climate_entity, config_entry),
             IRFloorHeatingRelayToggleCountSensor(climate_entity, config_entry),
+            IRFloorHeatingFusedRoomTemperatureSensor(climate_entity, config_entry),
+            IRFloorHeatingFusedFloorTemperatureSensor(climate_entity, config_entry),
         ]
     )
 
@@ -214,3 +216,35 @@ class IRFloorHeatingRelayToggleCountSensor(IRFloorHeatingBaseSensor):
     def native_value(self) -> int | None:
         """Return the total relay toggle count."""
         return self._climate_entity.relay_toggle_count
+
+
+class IRFloorHeatingFusedRoomTemperatureSensor(IRFloorHeatingBaseSensor):
+    """Sensor for fused room temperature."""
+
+    _attr_translation_key = "fused_room_temperature"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+    _attr_entity_registry_enabled_default = True
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the fused room temperature."""
+        return self._climate_entity.room_temperature
+
+
+class IRFloorHeatingFusedFloorTemperatureSensor(IRFloorHeatingBaseSensor):
+    """Sensor for fused floor temperature."""
+
+    _attr_translation_key = "fused_floor_temperature"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+    _attr_entity_registry_enabled_default = True
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the fused floor temperature."""
+        return self._climate_entity.floor_temperature

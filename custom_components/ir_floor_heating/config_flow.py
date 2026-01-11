@@ -32,7 +32,7 @@ from .const import (
     CONF_FLOOR_PID_KD,
     CONF_FLOOR_PID_KI,
     CONF_FLOOR_PID_KP,
-    CONF_FLOOR_SENSOR,
+    CONF_FLOOR_SENSORS,
     CONF_HEATER,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
@@ -45,8 +45,11 @@ from .const import (
     CONF_PID_KD,
     CONF_PID_KI,
     CONF_PID_KP,
+    CONF_POWER_SENSORS,
     CONF_PRECISION,
-    CONF_ROOM_SENSOR,
+    CONF_ROOM_SENSORS,
+    CONF_SAFETY_BUDGET_CAPACITY,
+    CONF_SAFETY_BUDGET_INTERVAL,
     CONF_SAFETY_HYSTERESIS,
     CONF_TARGET_TEMP,
     CONF_TEMP_STEP,
@@ -63,38 +66,52 @@ from .const import (
     DEFAULT_PID_KD,
     DEFAULT_PID_KI,
     DEFAULT_PID_KP,
+    DEFAULT_SAFETY_BUDGET_CAPACITY,
+    DEFAULT_SAFETY_BUDGET_INTERVAL,
     DEFAULT_SAFETY_HYSTERESIS,
     DOMAIN,
 )
+
+# Common selectors used in both initial setup and options
+COMMON_SELECTORS = {
+    CONF_HEATER: selector.EntitySelector(
+        selector.EntitySelectorConfig(domain="switch", multiple=False)
+    ),
+    CONF_ROOM_SENSORS: selector.EntitySelector(
+        selector.EntitySelectorConfig(
+            domain="sensor", device_class="temperature", multiple=True
+        )
+    ),
+    CONF_FLOOR_SENSORS: selector.EntitySelector(
+        selector.EntitySelectorConfig(
+            domain="sensor", device_class="temperature", multiple=True
+        )
+    ),
+    CONF_POWER_SENSORS: selector.EntitySelector(
+        selector.EntitySelectorConfig(
+            domain="sensor", device_class="power", multiple=True
+        )
+    ),
+}
 
 # Configuration schema for the initial setup
 CONFIG_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_NAME, default=DEFAULT_NAME): selector.TextSelector(),
-        vol.Required(CONF_HEATER): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="switch")
-        ),
-        vol.Required(CONF_ROOM_SENSOR): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
-        ),
-        vol.Required(CONF_FLOOR_SENSOR): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
-        ),
+        vol.Required(CONF_HEATER): COMMON_SELECTORS[CONF_HEATER],
+        vol.Required(CONF_ROOM_SENSORS): COMMON_SELECTORS[CONF_ROOM_SENSORS],
+        vol.Required(CONF_FLOOR_SENSORS): COMMON_SELECTORS[CONF_FLOOR_SENSORS],
+        vol.Optional(CONF_POWER_SENSORS): COMMON_SELECTORS[CONF_POWER_SENSORS],
     }
 )
 
 # Options schema for advanced configuration
 OPTIONS_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_HEATER): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="switch")
-        ),
-        vol.Required(CONF_ROOM_SENSOR): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
-        ),
-        vol.Required(CONF_FLOOR_SENSOR): selector.EntitySelector(
-            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
-        ),
+        vol.Required(CONF_HEATER): COMMON_SELECTORS[CONF_HEATER],
+        vol.Required(CONF_ROOM_SENSORS): COMMON_SELECTORS[CONF_ROOM_SENSORS],
+        vol.Required(CONF_FLOOR_SENSORS): COMMON_SELECTORS[CONF_FLOOR_SENSORS],
+        vol.Optional(CONF_POWER_SENSORS): COMMON_SELECTORS[CONF_POWER_SENSORS],
         vol.Optional(
             CONF_MAX_FLOOR_TEMP, default=DEFAULT_MAX_FLOOR_TEMP
         ): selector.NumberSelector(
@@ -224,6 +241,27 @@ OPTIONS_SCHEMA = vol.Schema(
                 max=2.0,
                 step=0.1,
                 unit_of_measurement="°C",
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(
+            CONF_SAFETY_BUDGET_CAPACITY, default=DEFAULT_SAFETY_BUDGET_CAPACITY
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=1.0,
+                max=20.0,
+                step=1.0,
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(
+            CONF_SAFETY_BUDGET_INTERVAL, default=DEFAULT_SAFETY_BUDGET_INTERVAL
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=30,
+                max=3600,
+                step=30,
+                unit_of_measurement="seconds",
                 mode=selector.NumberSelectorMode.BOX,
             )
         ),

@@ -48,10 +48,22 @@ graph TD
         DualPID[Dual-PID Min-Selector] --> Demand[Requested Demand %]
     end
 
-    subgraph "Safety Gates (Veto)"
-        Floor[Floor Temp] --> CheckLimit{>= Effective Limit?}
-        CheckLimit -- Yes --> Veto[VETO ACTIVE]
-        Veto --> Gate{Safety Gate}
+    subgraph "Safety Logic"
+        Floor[Floor Temp] --> CheckLimit{">= Effective Limit?"}
+        CheckLimit -- Yes --> SetVeto[Set VETO]
+        CheckLimit -- "No (Safe)" --> CheckRelease{"Releasing Veto?"}
+        
+        CheckRelease -- "No (Steady State)" --> Safe[SAFE]
+        CheckRelease -- "Yes (Was Vetoed)" --> Budget{"Budget Available?"}
+        
+        Budget -- "Yes (-1 Token)" --> ClearVeto[Clear VETO]
+        Budget -- No --> KeepVeto["Keep VETO (Budget Exhausted)"]
+        
+        SetVeto --> VetoState[VETO ACTIVE]
+        KeepVeto --> VetoState
+        ClearVeto --> Safe
+        Safe --> Gate{Safety Gate}
+        VetoState --> Gate
     end
 
     Demand --> Gate
@@ -69,7 +81,7 @@ Most commercial thermostats only enforce an absolute floor limit (e.g., 28°C). 
 - $T_{room}$: Current Air Temperature
 - $T_{floor}$: Current Floor Temperature
 - $L_{abs}$: Absolute Maximum Floor Temperature (e.g., 28°C)
-- $\Delta_{max}$: Maximum Differential (default: 8°C)
+- $\Delta_{max}$: Maximum Differential (default: 5.0°C)
 
 **The Logic:**
 The differential limit creates a floating ceiling for the floor temperature:
@@ -90,6 +102,15 @@ Assuming $L_{abs} = 28^{\circ}$C and $\Delta_{max} = 8^{\circ}$C:
 
     - $Limit_{effective} = \min(28, 22 + 8) = 30^{\circ}$C (capped to 28°C)
     - _Result:_ Absolute limit takes over at 28°C.
+
+#### Transition Cost: The Safety Budget
+
+To prevent "chattering" (rapid on/off cycling) when the floor temperature hovers exactly at the limit, the system employs a **Safety Budget** (Token Bucket algorithm).
+
+- **Mechanism**: Toggling the relay limits is not free. Releasing a safety veto (allowing heating) consumes a "budget token".
+- **Refill**: Tokens regenerate slowly over time (e.g., 1 token every 15 minutes).
+- **Priority**: Engaging the veto (turning OFF for safety) is always allowed, even if it causes a budget deficit. However, turning back ON requires a positive budget.
+- **Result**: This creates a dynamic, time-based hysteresis that strictly limits the maximum frequency of safety-related switching events, protecting the relay even in edge cases.
 
 #### Control Logic Pseudocode
 
@@ -133,14 +154,26 @@ The final demand is the **minimum** of these two values (hence "Select-Low"), en
 
 ```mermaid
 graph LR
+    subgraph "Inputs"
+        RS["Room Sensors<br/>(1..N)"]
+        FS["Floor Sensors<br/>(1..M)"]
+        PS["Power Sensors<br/>(1..K)"]
+    end
+
+    subgraph "State Estimation"
+       RS --> KF[Kalman Filter]
+       FS --> KF
+       PS --> KF
+       KF --> Room_T[Fused Room Temp]
+       KF --> Floor_T[Fused Floor Temp]
+    end
+
     subgraph "Demand Calculation"
-        Room_T["Room Temp"]
         Target_T["Target Temp"]
         Room_T -->|Error| Room_PID["Room PID<br/>Kp, Ki, Kd"]
         Target_T -->|Error| Room_PID
         Room_PID -->|Room Demand| Selector["Min-Selector"]
 
-        Floor_T["Floor Temp"]
         Eff_Limit["Effective Floor Limit"]
         Floor_T -->|Error| Floor_PID["Floor PID<br/>Kp, Ki, Kd"]
         Eff_Limit -->|Error| Floor_PID
@@ -183,18 +216,68 @@ Controls the maximum heating demand based on floor temperature approaching the e
 
 This soft-limit approach allows the floor temperature to smoothly approach the limit without hard cutoffs, improving thermal efficiency and reducing comfort disruptions.
 
+## MIMO & Kalman Filter Architecture
+
+This system moves beyond simpler thermostats by treating the heating problem as a **Multiple-Input, Multiple-Output (MIMO)** system (strictly MISO in terms of actuation, but MIMO in terms of state estimation).
+
+### Sensor Fusion
+
+```mermaid
+graph LR
+    subgraph "Inputs"
+        R["Room Sensors (1..N)"]
+        F["Floor Sensors (1..M)"]
+        Power[Heater Power state]
+    end
+
+    subgraph "Kalman Filter"
+        Predict["Prediction Step<br/>(Physics Model)"]
+        Gate["Dynamic Gating<br/>(Drop invalid sensors)"]
+        Update["Update Step<br/>(Correction)"]
+    end
+
+    subgraph "Fused State Output"
+        TR[Fused Room Temp]
+        TF[Fused Floor Temp]
+        Rates[Rate of Change]
+    end
+    
+    Power -- "Control Input (u)" --> Predict
+    R -- "Measurements (z)" --> Gate
+    F -- "Measurements (z)" --> Gate
+    Gate --> Update
+    Predict -->|Prior Estimate| Update
+    Update --> TR
+    Update --> TF
+    Update --> Rates
+```
+
+A **Fusion Kalman Filter** is used to combine readings from multiple sensors into stable, accurate state estimates.
+
+1.  **Multiple Inputs**: Accepts lists of $N$ floor sensors and $M$ room sensors.
+2.  **State Estimation Vector**: Maintains a 4-dimensional state state:
+    $$x = [T_{floor}, \dot{T}_{floor}, T_{room}, \dot{T}_{room}]^T$$
+    Tracking both temperature and its *rate of change* ($\dot{T}$) allows for faster reaction to trends.
+3.  **Active Prediction**: The filter uses the known power state of the heater (ON/OFF) as a control input ($u$) to predict future temperatures using a basic Newtonian physical model.
+    $$x_{k+1} = F x_k + B u_k$$
+4.  **Dynamic Gating**: If a sensor fails or becomes unavailable (returns `None`), the filter dynamically reshapes its measurement matrix ($H$) to exclude that sensor, ensuring the system continues to operate robustly as long as at least one sensor remains.
+
+This approach provides superior noise rejection compared to simple averaging and allows the system to "anticipate" temperature changes based on heater activity.
+
 ## Key Features
 
-### Dual-Sensor Control
+### MIMO Sensor Fusion (Kalman Filter)
 
-- **Room Temperature Sensor**: Primary control variable for occupant comfort.
-- **Floor Temperature Sensor**: Safety monitoring to prevent material damage.
+- **Input**: Fuses data from multiple room and floor sensors.
+- **Process**: Uses a Kalman Filter to reject noise and estimate true temperature states.
+- **Prediction**: Incorporates heater power state to predict temperature evolution (Newtonian kinematics).
 
 ### Advanced Safety Limits
 
 - **Absolute Maximum Floor Temperature**: Protects flooring materials (default: 28°C).
-- **Differential Maximum**: Limits temperature difference between floor and room (default: 8.0°C).
+- **Differential Maximum**: Limits temperature difference between floor and room (default: 5.0°C).
 - **Dynamic Limit Calculation**: Effective floor limit adapts based on current room temperature.
+- **Safety Budget**: Token bucket algorithm prevents rapid relay cycling when hovering near safety limits.
 
 ### TPI (Time Proportional & Integral) Algorithm
 
@@ -213,49 +296,64 @@ This soft-limit approach allows the floor temperature to smoothly approach the l
 
 ## Configuration Parameters
 
-| Parameter             | Description                                 | Default  |
-| --------------------- | ------------------------------------------- | -------- |
-| `heater`              | Switch entity controlling the heating relay | Required |
-| `room_sensor`         | Temperature sensor for room air             | Required |
-| `floor_sensor`        | Temperature sensor for floor surface        | Required |
-| `max_floor_temp`      | Absolute maximum floor temperature (°C)     | 28.0     |
-| `max_floor_temp_diff` | Maximum floor-room differential (°C)        | 8.0      |
-| `cycle_period`        | TPI cycle duration (seconds)                | 900      |
-| `min_cycle_duration`  | Minimum on/off time (seconds)               | 60       |
-| `boost_mode`          | Enable boost mode for faster warm-up        | true     |
-| `boost_temp_diff`     | Temperature error to activate boost (°C)    | 1.5      |
-| `pid_kp`              | Room PID Proportional gain                  | 80.0     |
-| `pid_ki`              | Room PID Integral gain                      | 2.0      |
-| `pid_kd`              | Room PID Derivative gain                    | 15.0     |
-| `floor_pid_kp`        | Floor Limiter PID Proportional gain         | 20.0     |
-| `floor_pid_ki`        | Floor Limiter PID Integral gain             | 0.5      |
-| `floor_pid_kd`        | Floor Limiter PID Derivative gain           | 10.0     |
-| `safety_hysteresis`   | Hysteresis for safety limit (°C)            | 0.25     |
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `heater` | Switch entity controlling the heating relay | Required |
+| `room_sensor` | Primary room temperature sensor (legacy) | Required* |
+| `floor_sensor` | Primary floor temperature sensor (legacy) | Required* |
+| `room_sensors` | List of room sensors for MIMO fusion | `[]` |
+| `floor_sensors` | List of floor sensors for MIMO fusion | `[]` |
+| `power_sensors` | List of power sensors for Kalman prediction | `[]` |
+| `max_floor_temp` | Absolute maximum floor temperature (°C) | 28.0 |
+| `max_floor_temp_diff` | Maximum floor-room differential (°C) | 5.0 |
+| `cycle_period` | TPI cycle duration (seconds) | 900 |
+| `min_cycle_duration` | Minimum on/off time (seconds) | 60 |
+| `boost_mode` | Enable boost mode for faster warm-up | true |
+| `boost_temp_diff` | Temperature error to activate boost (°C) | 1.5 |
+| `pid_kp` | Room PID Proportional gain | 80.0 |
+| `pid_ki` | Room PID Integral gain | 2.0 |
+| `pid_kd` | Room PID Derivative gain | 15.0 |
+| `floor_pid_kp` | Floor Limiter PID Proportional gain | 20.0 |
+| `floor_pid_ki` | Floor Limiter PID Integral gain | 0.5 |
+| `floor_pid_kd` | Floor Limiter PID Derivative gain | 10.0 |
+| `safety_hysteresis` | Hysteresis for safety limit (°C) | 0.25 |
+| `maintain_comfort_limit` | Enforce differential limit even when setpoint met | false |
+| `safety_budget_capacity` | Max tokens for safety switching budget | 2.0 |
+| `safety_budget_interval` | Seconds to regenerate one token | 300 |
+
+*Either singular `*_sensor` or plural `*_sensors` must be provided.
 
 ## Diagnostic Sensors
 
-The integration provides several diagnostic sensors to monitor internal state (disabled by default):
+The integration provides several diagnostic sensors to monitor internal state:
 
 - `sensor.<name>_demand_percent`: Final heating demand (0-100%, result of min-selector).
 - `sensor.<name>_room_pid_demand`: Room temperature PID demand (0-100%).
 - `sensor.<name>_floor_pid_demand`: Floor limiter PID demand (0-100%).
 - `sensor.<name>_effective_floor_limit`: Current dynamic floor temperature limit (°C).
-- `sensor.<name>_safety_veto_active`: Binary state indicating if safety limits are restricting heating (0/1).
-- `sensor.<name>_integral_error`: Room PID accumulated integral error for diagnostics (°C·s).
 - `sensor.<name>_room_integral_error`: Room PID integral error term (°C·s).
 - `sensor.<name>_floor_integral_error`: Floor limiter PID integral error term (°C·s).
+- `sensor.<name>_relay_toggle_count`: Total number of relay switching events (for maintenance tracking).
+- `sensor.<name>_fused_room_temperature`: Kalman-fused room temperature estimate.
+- `sensor.<name>_fused_floor_temperature`: Kalman-fused floor temperature estimate.
+- `binary_sensor.<name>_safety_veto_active`: Whether safety limits are currently blocking heating.
+- `binary_sensor.<name>_maintain_comfort_limit`: Whether the comfort limit is actively maintained.
 
 ## State Attributes
 
 The climate entity exposes the following additional attributes:
 
-- `floor_temperature`: Current floor surface temperature.
-- `room_temperature`: Current room air temperature.
-- `effective_floor_limit`: Dynamically calculated floor temperature limit.
+- `room_temperature`: Current fused room air temperature.
+- `floor_temperature`: Current fused floor surface temperature.
 - `demand_percent`: Calculated heating demand.
+- `effective_floor_limit`: Dynamically calculated floor temperature limit.
 - `safety_veto_active`: Whether safety limits are currently restricting heating.
-- `room_pid_demand`: Room temperature PID demand (0-100%).
-- `floor_pid_demand`: Floor limiter PID demand (0-100%).
+- `safety_budget_tokens`: Current balance of safety switching tokens.
+- `room_pid_demand`: Room temperature PID demand.
+- `floor_pid_demand`: Floor limiter PID demand.
+- `relay_toggle_count`: Total relay operations.
+- `max_floor_temp`: Configured absolute limit.
+- `max_floor_temp_diff`: Configured differential limit.
 
 ## Use Cases
 

@@ -9,6 +9,10 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.CLIMATE, Platform.SENSOR]
 CONF_HEATER = "heater"
 CONF_ROOM_SENSOR = "room_sensor"
 CONF_FLOOR_SENSOR = "floor_sensor"
+CONF_ROOM_SENSORS = "room_sensors"
+CONF_FLOOR_SENSORS = "floor_sensors"
+CONF_RELAYS = "relays"
+CONF_POWER_SENSORS = "power_sensors"
 CONF_TARGET_TEMP = "target_temp"
 CONF_MAX_FLOOR_TEMP = "max_floor_temp"
 CONF_MAX_FLOOR_TEMP_DIFF = "max_floor_temp_diff"
@@ -30,6 +34,8 @@ CONF_FLOOR_PID_KI = "floor_pid_ki"
 CONF_FLOOR_PID_KD = "floor_pid_kd"
 CONF_SAFETY_HYSTERESIS = "safety_hysteresis"
 CONF_MAINTAIN_COMFORT_LIMIT = "maintain_comfort_limit"
+CONF_SAFETY_BUDGET_CAPACITY = "safety_budget_capacity"
+CONF_SAFETY_BUDGET_INTERVAL = "safety_budget_interval"
 
 # Default values
 DEFAULT_NAME = "IR floor heating"
@@ -45,6 +51,8 @@ DEFAULT_SAFETY_HYSTERESIS = (
     0.25  # °C - Hysteresis for safety limit to prevent chattering
 )
 DEFAULT_MAINTAIN_COMFORT_LIMIT = False  # Disabled by default
+DEFAULT_SAFETY_BUDGET_CAPACITY = 2.0  # tokens (1 cycle = 2 toggles)
+DEFAULT_SAFETY_BUDGET_INTERVAL = 300  # seconds per token (12 tokens/hour)
 # PID tuning defaults (optimized for floor heating)
 DEFAULT_PID_KP = 80.0  # Proportional gain
 DEFAULT_PID_KI = 2.0  # Integral gain
@@ -53,3 +61,4 @@ DEFAULT_PID_KD = 15.0  # Derivative gain
 DEFAULT_FLOOR_PID_KP = 20.0  # Floor limiter proportional gain
 DEFAULT_FLOOR_PID_KI = 0.5  # Floor limiter integral gain
 DEFAULT_FLOOR_PID_KD = 10.0  # Floor limiter derivative gain
+MAX_DT_FOR_KALMAN_UPDATE = 3600  # Max seconds for Kalman filter update before reset

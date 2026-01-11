@@ -10,10 +10,11 @@
         "step": {
             "user": {
                 "data": {
-                    "floor_sensor": "Floor temperature sensor",
-                    "heater": "Heater switch",
+                    "floor_sensors": "Floor temperature sensors",
+                    "relays": "Heater switch",
                     "name": "Name",
-                    "room_sensor": "Room temperature sensor"
+                    "room_sensors": "Room temperature sensors",
+                    "power_sensors": "Power/Energy sensors"
                 },
                 "description": "Configure dual-sensor IR floor heating control with Time Proportional & Integral (TPI) algorithm",
                 "title": "Set up IR floor heating"
@@ -50,6 +51,9 @@
                     "room_temperature": {
                         "name": "Room temperature"
                     },
+                    "safety_budget_tokens": {
+                        "name": "Safety toggle budget"
+                    },
                     "safety_veto_active": {
                         "name": "Safety veto active"
                     }
@@ -68,6 +72,12 @@
             },
             "floor_pid_demand": {
                 "name": "Floor PID demand"
+            },
+            "fused_room_temperature": {
+                "name": "Fused room temperature"
+            },
+            "fused_floor_temperature": {
+                "name": "Fused floor temperature"
             },
             "integral_error": {
                 "name": "PID integral error"
@@ -90,8 +100,9 @@
                     "boost_mode": "Enable boost mode",
                     "boost_temp_diff": "Boost mode activation threshold",
                     "cycle_period": "TPI cycle period",
-                    "floor_sensor": "Floor temperature sensor",
-                    "heater": "Heater switch",
+                    "floor_sensors": "Floor temperature sensors",
+                    "relays": "Heater switch",
+                    "power_sensors": "Power/Energy sensors",
                     "initial_hvac_mode": "Initial HVAC mode",
                     "keep_alive": "Keep-alive interval",
                     "maintain_comfort_limit": "Maintain comfort limit during cooling",
@@ -104,7 +115,9 @@
                     "pid_ki": "PID integral gain (Ki)",
                     "pid_kp": "PID proportional gain (Kp)",
                     "precision": "Temperature precision",
-                    "room_sensor": "Room temperature sensor",
+                    "room_sensors": "Room temperature sensors",
+                    "safety_budget_capacity": "Safety toggle budget capacity",
+                    "safety_budget_interval": "Safety toggle budget refill interval",
                     "safety_hysteresis": "Safety limit hysteresis",
                     "target_temp": "Initial target temperature",
                     "target_temp_step": "Target temperature step"
@@ -120,6 +133,8 @@
                     "pid_kd": "Derivative gain: Dampens rate of change. Higher = less overshoot but may slow response. Default: 2.0",
                     "pid_ki": "Integral gain: Eliminates steady-state error over time. Higher = faster elimination but may cause overshoot. Default: 0.5",
                     "pid_kp": "Proportional gain: Response to current temperature error. Higher = faster response but may overshoot. Default: 10.0",
+                    "safety_budget_capacity": "Maximum number of safety-induced relay toggles that can occur in a burst. Each toggle (ON or OFF) consumes 1 unit.",
+                    "safety_budget_interval": "Time required to refill one toggle unit in the budget. This determines the average allowed rate of safety toggles.",
                     "safety_hysteresis": "Hysteresis band for safety limits. Prevents rapid on/off cycling when temperature is near the limit. Typical: 0.5\u00b0C"
                 },
                 "description": "Advanced configuration for dual-sensor TPI control",
