@@ -6,8 +6,9 @@ import unittest
 from datetime import timedelta
 
 from custom_components.ir_floor_heating.pid import PIDController
-from custom_components.ir_floor_heating.control import DualPIDController
+from custom_components.ir_floor_heating.control import ControlConfig, DualPIDController
 from custom_components.ir_floor_heating.tpi import TPIController
+
 
 class TestDualPIDMinSelector(unittest.TestCase):
     """Test the Dual-PID Min-Selector architecture."""
@@ -37,10 +38,12 @@ class TestDualPIDMinSelector(unittest.TestCase):
             room_temp=20.0,
             target_room=22.0,
             floor_temp=24.5,
-            max_floor_temp=28.0,
-            comfort_offset=5.0,
-            maintain_comfort=False,
-            dt=1.0
+            config=ControlConfig(
+                max_floor_temp=28.0,
+                comfort_offset=5.0,
+                maintain_comfort=False,
+            ),
+            dt=1.0,
         )
 
         # Min-selector should choose floor demand if it's lower
@@ -55,10 +58,12 @@ class TestDualPIDMinSelector(unittest.TestCase):
             room_temp=21.5,
             target_room=22.0,
             floor_temp=20.0,
-            max_floor_temp=28.0,
-            comfort_offset=5.0,
-            maintain_comfort=False,
-            dt=1.0
+            config=ControlConfig(
+                max_floor_temp=28.0,
+                comfort_offset=5.0,
+                maintain_comfort=False,
+            ),
+            dt=1.0,
         )
 
         assert result.final_demand == result.room_demand
@@ -71,13 +76,15 @@ class TestDualPIDMinSelector(unittest.TestCase):
         self.dual_pid.calculate(
             room_temp=20.0,
             target_room=22.0,
-            floor_temp=27.5, # Very close to limit (20+5=25) -> Floor will limit
-            max_floor_temp=28.0,
-            comfort_offset=5.0,
-            maintain_comfort=False,
-            dt=1.0
+            floor_temp=27.5,  # Very close to limit (20+5=25) -> Floor will limit
+            config=ControlConfig(
+                max_floor_temp=28.0,
+                comfort_offset=5.0,
+                maintain_comfort=False,
+            ),
+            dt=1.0,
         )
-        
+
         room_integral_after_limit = self.room_pid.get_integral_error()
         # Should be 0 because pause_integration was called
         assert room_integral_after_limit == 0.0
@@ -90,10 +97,12 @@ class TestDualPIDMinSelector(unittest.TestCase):
             room_temp=22.0,
             target_room=22.0,
             floor_temp=22.0,
-            max_floor_temp=28.0,
-            comfort_offset=3.0,
-            maintain_comfort=True,
-            dt=1.0
+            config=ControlConfig(
+                max_floor_temp=28.0,
+                comfort_offset=3.0,
+                maintain_comfort=True,
+            ),
+            dt=1.0,
         )
 
         # Floor target should be room_temp + comfort_offset = 25.0

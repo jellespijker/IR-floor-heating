@@ -92,8 +92,8 @@ from .const import (
     DEFAULT_PID_KP,
     DEFAULT_SAFETY_HYSTERESIS,
 )
+from .control import ControlConfig, DualPIDController
 from .pid import PIDController
-from .control import DualPIDController
 from .tpi import TPIController
 
 _LOGGER = logging.getLogger(__name__)
@@ -542,6 +542,17 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         """Return whether maintain comfort limit mode is active."""
         return self._maintain_comfort_limit
 
+    @property
+    def _control_config(self) -> ControlConfig:
+        """Return the current control configuration."""
+        return ControlConfig(
+            max_floor_temp=self._max_floor_temp,
+            comfort_offset=self._max_floor_temp_diff,
+            maintain_comfort=self._maintain_comfort_limit,
+            boost_mode=self._boost_mode,
+            boost_temp_diff=self._boost_temp_diff,
+        )
+
     def set_maintain_comfort_limit(self, *, enabled: bool) -> None:
         """Enable or disable maintain comfort limit mode."""
         self._maintain_comfort_limit = enabled
@@ -651,7 +662,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             return
 
         if not math.isfinite(room_temp):
-            _LOGGER.exception(
+            _LOGGER.error(
                 "Unable to update room temperature from sensor: "
                 "Sensor has illegal state %s",
                 state.state,
@@ -671,7 +682,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             return
 
         if not math.isfinite(floor_temp):
-            _LOGGER.exception(
+            _LOGGER.error(
                 "Unable to update floor temperature from sensor: "
                 "Sensor has illegal state %s",
                 state.state,
@@ -687,12 +698,10 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
 
         return self._dual_pid.get_floor_target(
             room_temp=self._room_temp,
-            target_room=self._target_temp if self._target_temp is not None else self._room_temp,
-            max_floor_temp=self._max_floor_temp,
-            comfort_offset=self._max_floor_temp_diff,
-            maintain_comfort=self._maintain_comfort_limit,
-            boost_mode=self._boost_mode,
-            boost_temp_diff=self._boost_temp_diff,
+            target_room=self._target_temp
+            if self._target_temp is not None
+            else self._room_temp,
+            config=self._control_config,
         )
 
     def _check_safety_veto(self, *, bypass_hysteresis: bool = False) -> bool:
@@ -788,49 +797,44 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                 self._floor_demand_percent = 0.0
                 self._final_demand_percent = 0.0
                 _LOGGER.debug("Safety veto active - demand set to 0%%")
-            else:
-                if (
-                    self._room_temp is not None
-                    and self._target_temp is not None
-                    and self._floor_temp is not None
-                ):
-                    result = self._dual_pid.calculate(
-                        room_temp=self._room_temp,
-                        target_room=self._target_temp,
-                        floor_temp=self._floor_temp,
-                        max_floor_temp=self._max_floor_temp,
-                        comfort_offset=self._max_floor_temp_diff,
-                        maintain_comfort=self._maintain_comfort_limit,
-                        boost_mode=self._boost_mode,
-                        boost_temp_diff=self._boost_temp_diff,
-                    )
-                    self._room_demand_percent = result.room_demand
-                    self._floor_demand_percent = result.floor_demand
-                    self._final_demand_percent = result.final_demand
+            elif (
+                self._room_temp is not None
+                and self._target_temp is not None
+                and self._floor_temp is not None
+            ):
+                result = self._dual_pid.calculate(
+                    room_temp=self._room_temp,
+                    target_room=self._target_temp,
+                    floor_temp=self._floor_temp,
+                    config=self._control_config,
+                )
+                self._room_demand_percent = result.room_demand
+                self._floor_demand_percent = result.floor_demand
+                self._final_demand_percent = result.final_demand
 
-                    if result.final_demand < result.room_demand:
-                         _LOGGER.debug(
-                            "Room PID restricted by floor limit: "
-                            "room_demand=%.1f%%, floor_demand=%.1f%%, final=%.1f%%",
-                            self._room_demand_percent,
-                            self._floor_demand_percent,
-                            self._final_demand_percent,
-                        )
-                    elif (
-                        self._maintain_comfort_limit
-                        and self._room_temp >= self._target_temp
-                    ):
-                        _LOGGER.debug(
-                            "Maintain comfort active: room_temp(%.1f) >= target(%.1f), "
-                            "using floor demand=%.1f%%",
-                            self._room_temp,
-                            self._target_temp,
-                            self._final_demand_percent,
-                        )
-                else:
-                    self._room_demand_percent = 0.0
-                    self._floor_demand_percent = 0.0
-                    self._final_demand_percent = 0.0
+                if result.final_demand < result.room_demand:
+                    _LOGGER.debug(
+                        "Room PID restricted by floor limit: "
+                        "room_demand=%.1f%%, floor_demand=%.1f%%, final=%.1f%%",
+                        self._room_demand_percent,
+                        self._floor_demand_percent,
+                        self._final_demand_percent,
+                    )
+                elif (
+                    self._maintain_comfort_limit
+                    and self._room_temp >= self._target_temp
+                ):
+                    _LOGGER.debug(
+                        "Maintain comfort active: room_temp(%.1f) >= target(%.1f), "
+                        "using floor demand=%.1f%%",
+                        self._room_temp,
+                        self._target_temp,
+                        self._final_demand_percent,
+                    )
+            else:
+                self._room_demand_percent = 0.0
+                self._floor_demand_percent = 0.0
+                self._final_demand_percent = 0.0
 
             self._demand_percent = self._final_demand_percent
 
