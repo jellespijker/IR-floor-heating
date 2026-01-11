@@ -92,6 +92,7 @@ from .const import (
     DEFAULT_PID_KP,
     DEFAULT_SAFETY_HYSTERESIS,
 )
+from .control import ControlConfig, DualPIDController
 from .pid import PIDController
 from .tpi import TPIController
 
@@ -278,6 +279,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             kd=config.floor_pid_kd,
             name="Floor Limiter",
         )
+        self._dual_pid = DualPIDController(self._room_pid, self._floor_pid)
         self._tpi_controller = TPIController(
             cycle_period=config.cycle_period,
             min_cycle_duration=config.min_cycle_duration,
@@ -540,6 +542,17 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         """Return whether maintain comfort limit mode is active."""
         return self._maintain_comfort_limit
 
+    @property
+    def _control_config(self) -> ControlConfig:
+        """Return the current control configuration."""
+        return ControlConfig(
+            max_floor_temp=self._max_floor_temp,
+            comfort_offset=self._max_floor_temp_diff,
+            maintain_comfort=self._maintain_comfort_limit,
+            boost_mode=self._boost_mode,
+            boost_temp_diff=self._boost_temp_diff,
+        )
+
     def set_maintain_comfort_limit(self, *, enabled: bool) -> None:
         """Enable or disable maintain comfort limit mode."""
         self._maintain_comfort_limit = enabled
@@ -649,7 +662,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             return
 
         if not math.isfinite(room_temp):
-            _LOGGER.exception(
+            _LOGGER.error(
                 "Unable to update room temperature from sensor: "
                 "Sensor has illegal state %s",
                 state.state,
@@ -669,7 +682,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             return
 
         if not math.isfinite(floor_temp):
-            _LOGGER.exception(
+            _LOGGER.error(
                 "Unable to update floor temperature from sensor: "
                 "Sensor has illegal state %s",
                 state.state,
@@ -683,48 +696,13 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         if self._room_temp is None:
             return self._max_floor_temp
 
-        # When maintaining comfort limit set the effective floor limit as a target
-        # setpoint. But only do this if the target room setpoint temperature is
-        # higher than the actual room temperature.
-        # If the target is lower, we want a controlled cooldown: the limit follows
-        # the room temperature ensuring the floor stays comfortable relative to
-        # the current room temp during passive cooling.
-        if self._maintain_comfort_limit and self._target_temp is not None:
-            if self._target_temp > self._room_temp:
-                # Heating up: Floor stays at comfort offset above target room temp
-                comfort_floor_limit = self._target_temp + self._max_floor_temp_diff
-            else:
-                # Cooling down: Floor stays at comfort offset above current room temp
-                # This ensures controlled cooldown as room temp drops via heatloss
-                comfort_floor_limit = self._room_temp + self._max_floor_temp_diff
-
-            # Still apply absolute max temperature constraint
-            return min(self._max_floor_temp, comfort_floor_limit)
-
-        # Calculate differential limit
-        diff_limit = self._room_temp + self._max_floor_temp_diff
-
-        # Apply boost mode logic if enabled
-        if self._boost_mode and self._target_temp is not None:
-            temp_error = self._target_temp - self._room_temp
-            # Activate boost when error is at or above threshold
-            if temp_error >= self._boost_temp_diff:
-                # Relax the differential limit during boost
-                # Add the full error to the base room temp to allow faster heating
-                relaxed_diff = self._max_floor_temp_diff + temp_error
-                diff_limit = self._room_temp + min(
-                    relaxed_diff, self._max_floor_temp_diff * 2.5
-                )
-                _LOGGER.info(
-                    "Boost mode active: temp error %.1f°C, relaxed floor limit "
-                    "from %.1f°C to %.1f°C",
-                    temp_error,
-                    self._room_temp + self._max_floor_temp_diff,
-                    diff_limit,
-                )
-
-        # Return the stricter of absolute and differential limits
-        return min(self._max_floor_temp, diff_limit)
+        return self._dual_pid.get_floor_target(
+            room_temp=self._room_temp,
+            target_room=self._target_temp
+            if self._target_temp is not None
+            else self._room_temp,
+            config=self._control_config,
+        )
 
     def _check_safety_veto(self, *, bypass_hysteresis: bool = False) -> bool:
         """
@@ -819,37 +797,22 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                 self._floor_demand_percent = 0.0
                 self._final_demand_percent = 0.0
                 _LOGGER.debug("Safety veto active - demand set to 0%%")
-            else:
-                # Calculate Room PID demand
-                if self._room_temp is not None and self._target_temp is not None:
-                    self._room_demand_percent = self._room_pid.calculate(
-                        setpoint=self._target_temp,
-                        process_variable=self._room_temp,
-                    )
-                else:
-                    self._room_demand_percent = 0.0
-
-                # Calculate Floor Limiter PID demand
-                # Target is the effective floor limit,
-                # process variable is current floor temp
-                if self._floor_temp is not None:
-                    effective_limit = self._calculate_effective_floor_limit()
-                    self._floor_demand_percent = self._floor_pid.calculate(
-                        setpoint=effective_limit,
-                        process_variable=self._floor_temp,
-                    )
-                else:
-                    self._floor_demand_percent = 0.0
-
-                # Min-Selector: take the lower demand (the limiting one)
-                self._final_demand_percent = min(
-                    self._room_demand_percent, self._floor_demand_percent
+            elif (
+                self._room_temp is not None
+                and self._target_temp is not None
+                and self._floor_temp is not None
+            ):
+                result = self._dual_pid.calculate(
+                    room_temp=self._room_temp,
+                    target_room=self._target_temp,
+                    floor_temp=self._floor_temp,
+                    config=self._control_config,
                 )
+                self._room_demand_percent = result.room_demand
+                self._floor_demand_percent = result.floor_demand
+                self._final_demand_percent = result.final_demand
 
-                # Anti-Windup Coordination:
-                # If floor limit is restricting us, pause room PID integration
-                if self._final_demand_percent < self._room_demand_percent:
-                    self._room_pid.pause_integration()
+                if result.final_demand < result.room_demand:
                     _LOGGER.debug(
                         "Room PID restricted by floor limit: "
                         "room_demand=%.1f%%, floor_demand=%.1f%%, final=%.1f%%",
@@ -857,6 +820,21 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
                         self._floor_demand_percent,
                         self._final_demand_percent,
                     )
+                elif (
+                    self._maintain_comfort_limit
+                    and self._room_temp >= self._target_temp
+                ):
+                    _LOGGER.debug(
+                        "Maintain comfort active: room_temp(%.1f) >= target(%.1f), "
+                        "using floor demand=%.1f%%",
+                        self._room_temp,
+                        self._target_temp,
+                        self._final_demand_percent,
+                    )
+            else:
+                self._room_demand_percent = 0.0
+                self._floor_demand_percent = 0.0
+                self._final_demand_percent = 0.0
 
             self._demand_percent = self._final_demand_percent
 

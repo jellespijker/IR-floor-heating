@@ -6,6 +6,7 @@ import unittest
 from datetime import timedelta
 
 from custom_components.ir_floor_heating.pid import PIDController
+from custom_components.ir_floor_heating.control import ControlConfig, DualPIDController
 from custom_components.ir_floor_heating.tpi import TPIController
 
 
@@ -20,6 +21,9 @@ class TestDualPIDMinSelector(unittest.TestCase):
         # Floor PID controller (limiter)
         self.floor_pid = PIDController(kp=20.0, ki=0.5, kd=10.0, name="FloorPID")
 
+        # Dual PID coordinator
+        self.dual_pid = DualPIDController(self.room_pid, self.floor_pid)
+
         # TPI for relay control
         self.tpi = TPIController(
             cycle_period=timedelta(seconds=900),
@@ -28,49 +32,86 @@ class TestDualPIDMinSelector(unittest.TestCase):
 
     def test_min_selector_logic(self) -> None:
         """Test min-selector chooses lower demand."""
-        room_demand = 80.0
-        floor_demand = 50.0
+        # Room needs heat (80% demand)
+        # Floor near limit (50% demand)
+        result = self.dual_pid.calculate(
+            room_temp=20.0,
+            target_room=22.0,
+            floor_temp=24.5,
+            config=ControlConfig(
+                max_floor_temp=28.0,
+                comfort_offset=5.0,
+                maintain_comfort=False,
+            ),
+            dt=1.0,
+        )
 
-        # Min-selector should choose floor demand
-        final_demand = min(room_demand, floor_demand)
-        assert final_demand == 50.0
+        # Min-selector should choose floor demand if it's lower
+        if result.floor_demand < result.room_demand:
+            assert result.final_demand == result.floor_demand
+        else:
+            assert result.final_demand == result.room_demand
 
     def test_room_demand_dominates(self) -> None:
         """Test when room demand is lower than floor limit."""
-        room_demand = 30.0
-        floor_demand = 80.0
+        result = self.dual_pid.calculate(
+            room_temp=21.5,
+            target_room=22.0,
+            floor_temp=20.0,
+            config=ControlConfig(
+                max_floor_temp=28.0,
+                comfort_offset=5.0,
+                maintain_comfort=False,
+            ),
+            dt=1.0,
+        )
 
-        final_demand = min(room_demand, floor_demand)
-        assert final_demand == 30.0
+        assert result.final_demand == result.room_demand
+        assert result.final_demand < result.floor_demand
 
     def test_anti_windup_coordination(self) -> None:
         """Test anti-windup coordination between controllers."""
         # Simulate scenario where floor limit restricts room demand
-        room_setpoint = 22.0
-        floor_setpoint = 25.0
-        room_temp = 20.0
-        floor_temp = 24.8
-
-        # Calculate demands
-        room_demand = self.room_pid.calculate(
-            setpoint=room_setpoint, process_variable=room_temp, dt=1.0
+        # 1st call to establish some integral
+        self.dual_pid.calculate(
+            room_temp=20.0,
+            target_room=22.0,
+            floor_temp=27.5,  # Very close to limit (20+5=25) -> Floor will limit
+            config=ControlConfig(
+                max_floor_temp=28.0,
+                comfort_offset=5.0,
+                maintain_comfort=False,
+            ),
+            dt=1.0,
         )
-        floor_demand = self.floor_pid.calculate(
-            setpoint=floor_setpoint, process_variable=floor_temp, dt=1.0
+
+        room_integral_after_limit = self.room_pid.get_integral_error()
+        # Should be 0 because pause_integration was called
+        assert room_integral_after_limit == 0.0
+
+    def test_maintain_comfort_mode(self) -> None:
+        """Test maintain comfort mode when room is at target."""
+        # Room is at target
+        # Floor is cold
+        result = self.dual_pid.calculate(
+            room_temp=22.0,
+            target_room=22.0,
+            floor_temp=22.0,
+            config=ControlConfig(
+                max_floor_temp=28.0,
+                comfort_offset=3.0,
+                maintain_comfort=True,
+            ),
+            dt=1.0,
         )
 
-        # Apply min-selector
-        final_demand = min(room_demand, floor_demand)
-
-        # If floor limit restricts, pause room PID integration
-        if final_demand < room_demand:
-            room_integral_before = self.room_pid.get_integral_error()
-            self.room_pid.pause_integration()
-            room_integral_after = self.room_pid.get_integral_error()
-
-            # Integral should be reset
-            assert room_integral_before > 0.0
-            assert room_integral_after == 0.0
+        # Floor target should be room_temp + comfort_offset = 25.0
+        assert result.floor_target == 25.0
+        # Floor demand should be > 0
+        assert result.floor_demand > 0.0
+        # Final demand should follow floor demand even if room PID wants 0%
+        assert result.final_demand == result.floor_demand
+        assert result.final_demand > 0.0
 
     def test_smooth_floor_approach(self) -> None:
         """Test smooth approach to floor temperature limit."""
