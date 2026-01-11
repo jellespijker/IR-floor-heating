@@ -152,15 +152,28 @@ class TestTPIController(unittest.TestCase):
 
     def test_demand_boundaries(self) -> None:
         """Test boundary demand values."""
-        # 0%
-        assert not self.controller.get_relay_state(demand_percent=0.0)
+        # Test with fresh controllers to avoid hysteresis from previous calls
 
-        # 100%
-        assert self.controller.get_relay_state(demand_percent=100.0)
+        # 0% demand should be OFF
+        controller_0 = TPIController(
+            cycle_period=self.cycle_period,
+            min_cycle_duration=self.min_cycle_duration,
+        )
+        assert not controller_0.get_relay_state(demand_percent=0.0)
 
-        # 50%
-        self.controller.reset_cycle()
-        state = self.controller.get_relay_state(demand_percent=50.0)
+        # 100% demand should be ON
+        controller_100 = TPIController(
+            cycle_period=self.cycle_period,
+            min_cycle_duration=self.min_cycle_duration,
+        )
+        assert controller_100.get_relay_state(demand_percent=100.0)
+
+        # 50% demand should be variable based on cycle position
+        controller_50 = TPIController(
+            cycle_period=self.cycle_period,
+            min_cycle_duration=self.min_cycle_duration,
+        )
+        state = controller_50.get_relay_state(demand_percent=50.0)
         assert isinstance(state, bool)
 
     def test_very_short_cycle(self) -> None:
@@ -242,6 +255,51 @@ class TestTPIControllerIntegration(unittest.TestCase):
         for _ in range(10):
             state = controller.get_relay_state(demand_percent=0.0)
             assert not state
+
+    def test_hysteresis_prevents_rapid_switching(self) -> None:
+        """Test that hysteresis prevents rapid on-off switching on demand oscillation."""
+        controller = TPIController(
+            cycle_period=timedelta(seconds=900),
+            min_cycle_duration=timedelta(seconds=60),
+        )
+
+        # Get initial state at 50% demand (should be ON in first 450s of cycle)
+        initial_state = controller.get_relay_state(demand_percent=50.0)
+        assert initial_state is True  # Should be ON at start of cycle
+
+        # Simulate rapid demand oscillation that would cross threshold
+        # Even if demand changes, state should not change until min_cycle_duration
+        # has elapsed in a different direction
+        with patch("custom_components.ir_floor_heating.tpi.datetime") as mock_datetime:
+            base_time = datetime.now(UTC)
+
+            # Make sure the mock returns the right time object
+            def mock_now(tz=None):
+                return base_time
+
+            mock_datetime.now = mock_now
+
+            # First call sets state
+            state1 = controller.get_relay_state(demand_percent=50.0)
+
+            # Try to switch immediately with very low demand
+            # Should not switch because not enough time has passed
+            state2 = controller.get_relay_state(demand_percent=5.0)
+            assert state2 == state1, (
+                "State changed too quickly (hysteresis not working)"
+            )
+
+            # Move time forward but not enough (30 seconds < 60 second min)
+            base_time = base_time + timedelta(seconds=30)
+            state3 = controller.get_relay_state(demand_percent=5.0)
+            assert state3 == state1, "State changed before min_cycle_duration elapsed"
+
+            # Move time forward past minimum (70 seconds > 60 second min)
+            base_time = base_time + timedelta(seconds=70)
+            state4 = controller.get_relay_state(demand_percent=5.0)
+            assert state4 != state1, (
+                "State should change after min_cycle_duration elapsed"
+            )
 
 
 if __name__ == "__main__":
