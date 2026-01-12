@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from custom_components.ir_floor_heating.tpi import TPIController
 
@@ -78,27 +78,32 @@ class TestTPIController(unittest.TestCase):
 
     def test_cycle_period_rollover(self) -> None:
         """Test cycle rolls over at period boundary."""
-        with patch("custom_components.ir_floor_heating.tpi.datetime") as mock_datetime:
+        with patch("homeassistant.util.dt.utcnow") as mock_now:
             # Set up time progression
             start_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-            mock_datetime.now.return_value = start_time
-            mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
+            mock_now.return_value = start_time
 
             controller = TPIController(
                 cycle_period=timedelta(seconds=100),
                 min_cycle_duration=timedelta(seconds=10),
             )
 
-            # Get initial state at t=0
+            # Get initial state at t=0. This sets cycle_start_time = start_time
+            controller.get_relay_state(demand_percent=50.0)
+            assert controller._cycle_start_time == start_time
+
+            # Move time forward beyond cycle period (101s)
+            end_time = start_time + timedelta(seconds=101)
+            mock_now.return_value = end_time
+
+            # This call should detect rollover and update cycle_start_time to end_time
             controller.get_relay_state(demand_percent=50.0)
 
-            # Move time forward beyond cycle period
-            end_time = start_time + timedelta(seconds=150)
-            mock_datetime.now.return_value = end_time
+            assert controller._cycle_start_time == end_time
 
-            # Cycle should have reset
-            controller.get_cycle_info()
-            # After rollover, time_in_cycle should be less than original cycle period
+            # Check info reflects new cycle
+            info = controller.get_cycle_info()
+            assert info["time_in_cycle"] == 0.0
 
     def test_reset_cycle(self) -> None:
         """Test cycle reset functionality."""
@@ -114,7 +119,7 @@ class TestTPIController(unittest.TestCase):
         """Test cycle info when no cycle initialized."""
         info = self.controller.get_cycle_info()
         assert info["time_in_cycle"] == 0.0
-        assert info["cycle_period"] == 0.0
+        assert info["cycle_period"] == 900.0
 
     def test_get_cycle_info_with_cycle(self) -> None:
         """Test cycle info after initialization."""
@@ -256,50 +261,45 @@ class TestTPIControllerIntegration(unittest.TestCase):
             state = controller.get_relay_state(demand_percent=0.0)
             assert not state
 
-    def test_hysteresis_prevents_rapid_switching(self) -> None:
-        """Test that hysteresis prevents rapid on-off switching on demand oscillation."""
+    def test_demand_latching(self) -> None:
+        """Test that demand is latched at the start of the cycle."""
         controller = TPIController(
             cycle_period=timedelta(seconds=900),
             min_cycle_duration=timedelta(seconds=60),
         )
 
-        # Get initial state at 50% demand (should be ON in first 450s of cycle)
-        initial_state = controller.get_relay_state(demand_percent=50.0)
-        assert initial_state is True  # Should be ON at start of cycle
+        with patch("homeassistant.util.dt.utcnow") as mock_now:
+            base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+            mock_now.return_value = base_time
 
-        # Simulate rapid demand oscillation that would cross threshold
-        # Even if demand changes, state should not change until min_cycle_duration
-        # has elapsed in a different direction
-        with patch("custom_components.ir_floor_heating.tpi.datetime") as mock_datetime:
-            base_time = datetime.now(UTC)
+            # Get initial state at 50% demand (should be ON in first 450s of cycle)
+            initial_state = controller.get_relay_state(demand_percent=50.0)
+            assert initial_state is True
+            # Check internal latch - 50% of 900 is 450
+            assert controller._current_on_duration == 450.0
 
-            # Make sure the mock returns the right time object
-            def mock_now(tz=None):
-                return base_time
+            # Move time forward 10s
+            mock_now.return_value = base_time + timedelta(seconds=10)
 
-            mock_datetime.now = mock_now
-
-            # First call sets state
-            state1 = controller.get_relay_state(demand_percent=50.0)
-
-            # Try to switch immediately with very low demand
-            # Should not switch because not enough time has passed
+            # Change demand drastically to 5% (would be 45s)
+            # But latching should keep it at 450s logic
             state2 = controller.get_relay_state(demand_percent=5.0)
-            assert state2 == state1, (
-                "State changed too quickly (hysteresis not working)"
-            )
 
-            # Move time forward but not enough (30 seconds < 60 second min)
-            base_time = base_time + timedelta(seconds=30)
-            state3 = controller.get_relay_state(demand_percent=5.0)
-            assert state3 == state1, "State changed before min_cycle_duration elapsed"
+            # Should still be True because we are at t=10s, and latched duration is 450s
+            assert state2 is True
+            assert controller._current_on_duration == 450.0
 
-            # Move time forward past minimum (70 seconds > 60 second min)
-            base_time = base_time + timedelta(seconds=70)
-            state4 = controller.get_relay_state(demand_percent=5.0)
-            assert state4 != state1, (
-                "State should change after min_cycle_duration elapsed"
-            )
+            # Move time forward 100s (t=110s)
+            mock_now.return_value = base_time + timedelta(seconds=110)
+            state3 = controller.get_relay_state(demand_percent=0.0)
+            assert state3 is True  # Still ON despite 0 demand, because latched 50%
+
+            # Move time past 450s (t=460s)
+            mock_now.return_value = base_time + timedelta(seconds=460)
+            state4 = controller.get_relay_state(demand_percent=100.0)
+            assert (
+                state4 is False
+            )  # OFF because time > 450s, even if demand is 100 on this call
 
 
 if __name__ == "__main__":

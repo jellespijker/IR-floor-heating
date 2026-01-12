@@ -12,24 +12,23 @@ DT_EPSILON = 1e-4
 
 @dataclass
 class KalmanTuning:
-    """
-    Tuning parameters for a slower, more stable response.
+    """Tuning for damped thermal mass model with nano-gains."""
 
-    Lower gain = slower reaction to power.
-    Lower Q = smoother state transitions (less jitter).
-    Higher R = more immunity to sensor noise.
-    """
+    # 1. NANO-GAINS: Align 1000W with slow-heating thermal mass
+    # Previous gains caused "Rocket Effect" - temperature acceleration was too
+    # aggressive. These values prevent runaway velocity buildup.
+    kf_floor_gain: float = 1e-9  # Was 1e-5
+    kf_room_gain: float = 1e-10  # Was 1e-6
 
-    # Reduced gains for a slower build-up
-    kf_floor_gain: float = 0.00001  # Reduced from 0.0001
-    kf_room_gain: float = 0.000001  # Reduced from 0.00001
+    # 2. HEAVY INERTIA: Trust the physical trend over jumps
+    # Lower Q makes the filter rely on smooth predictions rather than sensor jumps.
+    q_var_floor: float = 1e-7  # Was 1e-5
+    q_var_room: float = 1e-8  # Was 1e-6
 
-    # Process noise: Lowering these makes the filter "stiffer" (ignores spikes)
-    q_var_floor: float = 0.0001  # Reduced from 0.001
-    q_var_room: float = 0.00001  # Reduced from 0.0001
-
-    # Measurement noise: Increasing this helps filter out "touch noise"
-    r_var: float = 0.5  # Increased from 0.1
+    # 3. DIFFERENTIATED SENSOR TRUST
+    # Floor sensor is jittery (high R), room sensors are accurate (low R).
+    r_var_floor: float = 1.5  # High R to smooth floor jitter
+    r_var_room: float = 0.1  # Low R to track accurate room sensors
 
 
 class FusionKalmanFilter:
@@ -55,8 +54,12 @@ class FusionKalmanFilter:
 
         self.kf = KalmanFilter(dim_x=4, dim_z=num_floor_sensors + num_room_sensors)
 
-        # State Transition Matrix (F): Constant Velocity Model
-        self.kf.F = np.array([[1, dt, 0, 0], [0, 1, 0, 0], [0, 0, 1, dt], [0, 0, 0, 1]])
+        # State Transition Matrix (F) will be set in _update_matrices with damping
+        # Initialize with damped model
+        damping = 0.95
+        self.kf.F = np.array(
+            [[1, dt, 0, 0], [0, damping, 0, 0], [0, 0, 1, dt], [0, 0, 0, damping]]
+        )
 
         # Update B and Q matrices
         self._update_matrices(dt)
@@ -72,7 +75,21 @@ class FusionKalmanFilter:
         self.kf.x = np.array([[20.0, 0.0, 20.0, 0.0]]).T
 
     def _update_matrices(self, dt: float) -> None:
-        """Update B and Q matrices based on current dt and tuning."""
+        """Update F, B and Q matrices based on current dt and tuning."""
+        # State Transition Matrix (F): Introduce damping to velocity states
+        # This prevents the "Rocket Effect" by decaying the rate of change.
+        # Without damping, velocity accumulates indefinitely causing runaway
+        # temperatures.
+        damping = 0.95
+        self.kf.F = np.array(
+            [
+                [1, dt, 0, 0],  # Floor position influenced by velocity
+                [0, damping, 0, 0],  # Floor velocity with damping (decay)
+                [0, 0, 1, dt],  # Room position influenced by velocity
+                [0, 0, 0, damping],  # Room velocity with damping (decay)
+            ]
+        )
+
         # Control Input Matrix (B)
         self.kf.B = np.array(
             [
@@ -138,13 +155,17 @@ class FusionKalmanFilter:
         # 3. Dynamic construction of H and R for this update
         num_valid = len(z)
         h_v = np.zeros((num_valid, 4))
+        r_diag = []
+
         for i, idx in enumerate(valid_indices):
             if idx < self.num_floor:
                 h_v[i, 0] = 1  # Map to T_floor
+                r_diag.append(self.tuning.r_var_floor)
             else:
                 h_v[i, 2] = 1  # Map to T_room
+                r_diag.append(self.tuning.r_var_room)
 
-        r_v = np.eye(num_valid) * self.tuning.r_var
+        r_v = np.diag(r_diag)
 
         # 4. Update Step
         self.kf.update(np.array(z), R=r_v, H=h_v)

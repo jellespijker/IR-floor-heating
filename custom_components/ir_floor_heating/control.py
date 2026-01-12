@@ -42,6 +42,11 @@ class DualPIDController:
         self.room_pid = room_pid
         self.floor_pid = floor_pid
 
+    def reset(self) -> None:
+        """Reset both PID controllers (clear integral windup)."""
+        self.room_pid.reset()
+        self.floor_pid.reset()
+
     def get_floor_target(
         self,
         *,
@@ -106,11 +111,25 @@ class DualPIDController:
             config=config,
         )
 
-        # 2. Calculate individual demands
+        # 2. Early exit if room is satisfied (not in maintain_comfort mode)
+        # This prevents floor PID from accumulating error when heating isn't needed
+        if not config.maintain_comfort and room_temp >= target_room:
+            # Pause both PIDs to prevent windup
+            self.room_pid.pause_integration()
+            self.floor_pid.pause_integration()
+
+            return PIDResult(
+                room_demand=0.0,
+                floor_demand=0.0,
+                final_demand=0.0,
+                floor_target=floor_target,
+            )
+
+        # 3. Calculate individual demands
         room_demand = self.room_pid.calculate(target_room, room_temp, dt)
         floor_demand = self.floor_pid.calculate(floor_target, floor_temp, dt)
 
-        # 3. Combine demands
+        # 4. Combine demands
         # When maintain comfort is enabled and room is at/above target,
         # the floor PID becomes the primary demand generator.
         if config.maintain_comfort and room_temp >= target_room:

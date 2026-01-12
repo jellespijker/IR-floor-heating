@@ -659,6 +659,8 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
         self._target_temp = temperature
+        # Reset PID integral terms to prevent old windup from affecting new setpoint
+        self._dual_pid.reset()
         await self._async_control_heating(force=True)
         self.async_write_ha_state()
 
@@ -851,6 +853,17 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             self._room_demand_percent = result.room_demand
             self._floor_demand_percent = result.floor_demand
             self._final_demand_percent = result.final_demand
+
+            # Override: Stop heating if room is above target
+            # This takes precedence over maintain_comfort mode
+            if self._room_temp > self._target_temp:
+                self._final_demand_percent = 0.0
+                _LOGGER.debug(
+                    "Room above target: room_temp(%.1f) > target(%.1f), "
+                    "forcing demand to 0%%",
+                    self._room_temp,
+                    self._target_temp,
+                )
 
             if result.final_demand < result.room_demand:
                 _LOGGER.debug(
