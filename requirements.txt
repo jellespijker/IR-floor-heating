@@ -1,5 +1,4 @@
 colorlog==6.10.1
-filterpy==1.4.5
 numpy<3
 homeassistant>=2025.12.3
 pip>=21.3.1

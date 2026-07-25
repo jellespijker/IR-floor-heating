@@ -1,13 +1,70 @@
-"""Kalman filter for sensor fusion."""
+"""
+Kalman filter for sensor fusion.
+
+Implemented locally instead of depending on filterpy: filterpy.kalman
+unconditionally imports filterpy.common, which unconditionally imports
+scipy.linalg at module load time even though we only need a linear
+predict/update and one closed-form noise matrix. That made this
+integration's setup fail outright on any environment where scipy has no
+prebuilt wheel (e.g. a brand-new CPython release) and has to be built
+from source.
+"""
 
 from dataclasses import dataclass
 
 import numpy as np
-from filterpy.common import Q_discrete_white_noise
-from filterpy.kalman import KalmanFilter
 
 # Small epsilon for dt comparisons
 DT_EPSILON = 1e-4
+
+
+def _q_discrete_white_noise(dt: float, var: float) -> np.ndarray:
+    """
+    Process noise for a discretized constant-velocity (position/velocity) model.
+
+    Closed form for dim=2, block_size=1 from filterpy.common.Q_discrete_white_noise
+    (Bar-Shalom, "Estimation with Applications to Tracking and Navigation", 2001,
+    p. 274).
+    """
+    return var * np.array([[0.25 * dt**4, 0.5 * dt**3], [0.5 * dt**3, dt**2]])
+
+
+class _LinearKalmanFilter:
+    """
+    Minimal linear Kalman filter, covering only predict/update.
+
+    Ported from filterpy.kalman.KalmanFilter's predict()/update() (MIT
+    licensed, Roger R Labbe Jr) for the subset of behavior FusionKalmanFilter
+    relies on: a control-input predict step and a Joseph-form measurement
+    update with an explicit H/R override.
+    """
+
+    def __init__(self, dim_x: int, dim_z: int) -> None:
+        self.dim_x = dim_x
+        self.x = np.zeros((dim_x, 1))
+        self.P = np.eye(dim_x)
+        self.Q = np.eye(dim_x)
+        self.B: np.ndarray | None = None
+        self.F = np.eye(dim_x)
+        self.H = np.zeros((dim_z, dim_x))
+
+    def predict(self, u: np.ndarray | None = None) -> None:
+        """Advance the state estimate: x = Fx + Bu, P = FPF' + Q."""
+        if self.B is not None and u is not None:
+            self.x = self.F @ self.x + self.B @ u
+        else:
+            self.x = self.F @ self.x
+        self.P = self.F @ self.P @ self.F.T + self.Q
+
+    def update(self, z: np.ndarray, r: np.ndarray, h: np.ndarray) -> None:
+        """Fold in a measurement using the (numerically stable) Joseph form."""
+        y = z - h @ self.x
+        pht = self.P @ h.T
+        s = h @ pht + r
+        k = pht @ np.linalg.inv(s)
+        self.x = self.x + k @ y
+        i_kh = np.eye(self.dim_x) - k @ h
+        self.P = i_kh @ self.P @ i_kh.T + k @ r @ k.T
 
 
 @dataclass
@@ -52,7 +109,9 @@ class FusionKalmanFilter:
         # Store tuning
         self.tuning = tuning
 
-        self.kf = KalmanFilter(dim_x=4, dim_z=num_floor_sensors + num_room_sensors)
+        self.kf = _LinearKalmanFilter(
+            dim_x=4, dim_z=num_floor_sensors + num_room_sensors
+        )
 
         # State Transition Matrix (F) will be set in _update_matrices with damping
         # Initialize with damped model
@@ -101,8 +160,8 @@ class FusionKalmanFilter:
         )
 
         # Process Noise (Q)
-        q_floor = Q_discrete_white_noise(dim=2, dt=dt, var=self.tuning.q_var_floor)
-        q_room = Q_discrete_white_noise(dim=2, dt=dt, var=self.tuning.q_var_room)
+        q_floor = _q_discrete_white_noise(dt, self.tuning.q_var_floor)
+        q_room = _q_discrete_white_noise(dt, self.tuning.q_var_room)
         self.kf.Q = np.block([[q_floor, np.zeros((2, 2))], [np.zeros((2, 2)), q_room]])
 
     def _update_h_matrix(self, m: int, n: int) -> None:
@@ -168,13 +227,10 @@ class FusionKalmanFilter:
         r_v = np.diag(r_diag)
 
         # 4. Update Step
-        # filterpy validates z against the KalmanFilter's construction-time
-        # dim_z, which counts every configured sensor. Gating above drops the
-        # unavailable ones, so dim_z has to follow the gated measurement count
-        # or the reshape rejects a short z. H and R are already sized to match,
-        # and update() recomputes K/S/SI from them, so this stays consistent.
-        self.kf.dim_z = num_valid
-        self.kf.update(np.array(z).reshape(num_valid, 1), R=r_v, H=h_v)
+        # H and R are sized to the gated (possibly shorter) measurement count;
+        # update() derives K/S from them directly, so no separate dim_z
+        # bookkeeping is needed.
+        self.kf.update(np.array(z).reshape(num_valid, 1), r=r_v, h=h_v)
 
     @property
     def x(self) -> np.ndarray:
