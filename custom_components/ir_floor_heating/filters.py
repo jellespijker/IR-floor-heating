@@ -168,7 +168,13 @@ class FusionKalmanFilter:
         r_v = np.diag(r_diag)
 
         # 4. Update Step
-        self.kf.update(np.array(z), R=r_v, H=h_v)
+        # filterpy validates z against the KalmanFilter's construction-time
+        # dim_z, which counts every configured sensor. Gating above drops the
+        # unavailable ones, so dim_z has to follow the gated measurement count
+        # or the reshape rejects a short z. H and R are already sized to match,
+        # and update() recomputes K/S/SI from them, so this stays consistent.
+        self.kf.dim_z = num_valid
+        self.kf.update(np.array(z).reshape(num_valid, 1), R=r_v, H=h_v)
 
     @property
     def x(self) -> np.ndarray:
@@ -178,9 +184,9 @@ class FusionKalmanFilter:
     @property
     def floor_temp(self) -> float:
         """Fused floor temperature."""
-        return float(self.kf.x[0])
+        return float(self.kf.x[0, 0])
 
     @property
     def room_temp(self) -> float:
         """Fused room temperature."""
-        return float(self.kf.x[2])
+        return float(self.kf.x[2, 0])
