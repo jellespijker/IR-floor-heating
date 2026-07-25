@@ -152,7 +152,7 @@ class ClimateConfig:
     def from_entry(cls, hass: HomeAssistant, entry: ConfigEntry) -> ClimateConfig:
         """Create ClimateConfig from a ConfigEntry."""
         # Read from options if available, otherwise fall back to data
-        config = entry.options if entry.options else entry.data
+        config = entry.options or entry.data
 
         def get_list(key: str, fallback_key: str | None = None) -> list[str]:
             val = config.get(key)
