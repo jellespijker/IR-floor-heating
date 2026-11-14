@@ -8,5 +8,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/jellespijker/IR-floor-heating/issues",
   "requirements": ["numpy<3"],
-  "version": "0.4.1"
+  "version": "0.5.0"
 }
