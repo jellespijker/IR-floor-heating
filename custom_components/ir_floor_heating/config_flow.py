@@ -47,6 +47,7 @@ from .const import (
     CONF_PID_KP,
     CONF_POWER_SENSORS,
     CONF_PRECISION,
+    CONF_REFERENCE_ROOM_SENSOR,
     CONF_ROOM_SENSORS,
     CONF_SAFETY_BUDGET_CAPACITY,
     CONF_SAFETY_BUDGET_INTERVAL,
@@ -82,6 +83,11 @@ COMMON_SELECTORS = {
             domain="sensor", device_class="temperature", multiple=True
         )
     ),
+    CONF_REFERENCE_ROOM_SENSOR: selector.EntitySelector(
+        selector.EntitySelectorConfig(
+            domain="sensor", device_class="temperature", multiple=False
+        )
+    ),
     CONF_FLOOR_SENSORS: selector.EntitySelector(
         selector.EntitySelectorConfig(
             domain="sensor", device_class="temperature", multiple=True
@@ -100,6 +106,9 @@ CONFIG_SCHEMA = vol.Schema(
         vol.Required(CONF_NAME, default=DEFAULT_NAME): selector.TextSelector(),
         vol.Required(CONF_HEATER): COMMON_SELECTORS[CONF_HEATER],
         vol.Required(CONF_ROOM_SENSORS): COMMON_SELECTORS[CONF_ROOM_SENSORS],
+        vol.Optional(CONF_REFERENCE_ROOM_SENSOR): COMMON_SELECTORS[
+            CONF_REFERENCE_ROOM_SENSOR
+        ],
         vol.Required(CONF_FLOOR_SENSORS): COMMON_SELECTORS[CONF_FLOOR_SENSORS],
         vol.Optional(CONF_POWER_SENSORS): COMMON_SELECTORS[CONF_POWER_SENSORS],
     }
@@ -110,6 +119,9 @@ OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HEATER): COMMON_SELECTORS[CONF_HEATER],
         vol.Required(CONF_ROOM_SENSORS): COMMON_SELECTORS[CONF_ROOM_SENSORS],
+        vol.Optional(CONF_REFERENCE_ROOM_SENSOR): COMMON_SELECTORS[
+            CONF_REFERENCE_ROOM_SENSOR
+        ],
         vol.Required(CONF_FLOOR_SENSORS): COMMON_SELECTORS[CONF_FLOOR_SENSORS],
         vol.Optional(CONF_POWER_SENSORS): COMMON_SELECTORS[CONF_POWER_SENSORS],
         vol.Optional(

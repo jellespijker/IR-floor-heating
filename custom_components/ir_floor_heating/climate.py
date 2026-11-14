@@ -72,6 +72,7 @@ from .const import (
     CONF_PID_KP,
     CONF_POWER_SENSORS,
     CONF_PRECISION,
+    CONF_REFERENCE_ROOM_SENSOR,
     CONF_RELAYS,
     CONF_ROOM_SENSOR,
     CONF_ROOM_SENSORS,
@@ -122,6 +123,7 @@ class ClimateConfig:
     room_sensors: list[str]
     floor_sensors: list[str]
     power_sensors: list[str]
+    reference_room_sensor: str | None
     min_temp: float | None
     max_temp: float | None
     target_temp: float | None
@@ -172,6 +174,11 @@ class ClimateConfig:
         floor_sensors = get_list(CONF_FLOOR_SENSORS, CONF_FLOOR_SENSOR)
         power_sensors = get_list(CONF_POWER_SENSORS)
 
+        # The reference sensor is a room sensor too: make sure it is fused.
+        reference_room_sensor = config.get(CONF_REFERENCE_ROOM_SENSOR) or None
+        if reference_room_sensor and reference_room_sensor not in room_sensors:
+            room_sensors = [*room_sensors, reference_room_sensor]
+
         # Handle heater entity (single relay)
         heater_id = config.get(CONF_HEATER)
         if not heater_id:
@@ -194,6 +201,7 @@ class ClimateConfig:
             room_sensors=room_sensors,
             floor_sensors=floor_sensors,
             power_sensors=power_sensors,
+            reference_room_sensor=reference_room_sensor,
             min_temp=config.get(CONF_MIN_TEMP),
             max_temp=config.get(CONF_MAX_TEMP),
             target_temp=config.get(CONF_TARGET_TEMP),
@@ -342,6 +350,12 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             num_floor_sensors=len(self.floor_sensors),
             num_room_sensors=len(self.room_sensors),
             dt=config.cycle_period.total_seconds(),
+            # Only honour a reference that is one of the fused room sensors
+            reference_room_index=(
+                config.room_sensors.index(config.reference_room_sensor)
+                if config.reference_room_sensor in config.room_sensors
+                else None
+            ),
         )
 
         # PID Controllers (Dual-PID Min-Selector Architecture)
@@ -533,6 +547,12 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         return DEFAULT_MAX_TEMP
 
     @property
+    def reference_room_sensor(self) -> str | None:
+        """Return the room sensor the other room sensors are calibrated against."""
+        index = self._kf.reference_room_index
+        return None if index is None else self.room_sensors[index]
+
+    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         attrs = {
@@ -546,6 +566,16 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             "safety_veto_active": self._safety_veto_active,
             "relay_toggle_count": self._relay_toggle_count,
         }
+
+        if self.reference_room_sensor:
+            attrs["reference_room_sensor"] = self.reference_room_sensor
+            attrs["room_sensor_offsets"] = {
+                entity_id: round(bias, 2)
+                for entity_id, bias in zip(
+                    self.room_sensors, self._kf.room_biases, strict=True
+                )
+                if bias is not None
+            }
 
         if self._room_temp is not None:
             effective_limit = self._calculate_effective_floor_limit()
@@ -781,7 +811,12 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         async with self._temp_lock:
             # 1. Gather data and update Kalman Filter
             floor_values = self._sensor_manager.get_floor_temperatures()
-            room_values = self._sensor_manager.get_room_temperatures()
+            # With a reference sensor each reading is used once, so a slow
+            # reference is not re-fed as if it had just reported.
+            if self.reference_room_sensor:
+                room_values = self._sensor_manager.get_fresh_room_temperatures()
+            else:
+                room_values = self._sensor_manager.get_room_temperatures()
             total_power = self._sensor_manager.calculate_total_power()
 
             now = dt_util.utcnow()

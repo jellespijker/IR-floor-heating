@@ -75,3 +75,85 @@ def test_calculate_total_power_unavailable_sensor():
     }.get(entity_id)
 
     assert manager.calculate_total_power() == 100.0
+
+
+def _room_manager(hass):
+    return SensorManager(
+        hass=hass,
+        room_sensors=["sensor.fast", "sensor.reference"],
+        floor_sensors=["sensor.floor"],
+        power_sensors=[],
+        heater_entity_id="switch.heater",
+    )
+
+
+def _state(value, reported):
+    state = MagicMock()
+    state.state = value
+    state.last_reported = reported
+    return state
+
+
+def test_fresh_room_temperatures_hand_out_each_report_once():
+    """A sensor that has not reported again yields None on the next read."""
+    hass = MagicMock()
+    states = {
+        "sensor.fast": _state("23.5", 1),
+        "sensor.reference": _state("20.0", 1),
+    }
+    hass.states.get.side_effect = states.get
+    manager = _room_manager(hass)
+
+    # First read: everything known counts as fresh.
+    assert manager.get_fresh_room_temperatures() == [23.5, 20.0]
+    # Nothing reported since.
+    assert manager.get_fresh_room_temperatures() == [None, None]
+
+    # Only the fast sensor reports again.
+    states["sensor.fast"] = _state("23.6", 2)
+    assert manager.get_fresh_room_temperatures() == [23.6, None]
+
+
+def test_fresh_room_temperatures_count_unchanged_value_as_new_report():
+    """A repeat of the same value with a newer report time is a measurement."""
+    hass = MagicMock()
+    states = {
+        "sensor.fast": _state("23.5", 1),
+        "sensor.reference": _state("20.0", 1),
+    }
+    hass.states.get.side_effect = states.get
+    manager = _room_manager(hass)
+    manager.get_fresh_room_temperatures()
+
+    states["sensor.reference"] = _state("20.0", 2)
+    assert manager.get_fresh_room_temperatures() == [None, 20.0]
+
+
+def test_fresh_room_temperatures_skip_unavailable_and_recover():
+    """An unavailable sensor is skipped and picked up when it returns."""
+    hass = MagicMock()
+    states = {
+        "sensor.fast": _state("23.5", 1),
+        "sensor.reference": _state("unavailable", 1),
+    }
+    hass.states.get.side_effect = states.get
+    manager = _room_manager(hass)
+
+    assert manager.get_fresh_room_temperatures() == [23.5, None]
+
+    states["sensor.reference"] = _state("20.0", 2)
+    assert manager.get_fresh_room_temperatures() == [None, 20.0]
+
+
+def test_room_temperatures_are_not_affected_by_fresh_reads():
+    """The plain getter keeps returning the current value of every sensor."""
+    hass = MagicMock()
+    states = {
+        "sensor.fast": _state("23.5", 1),
+        "sensor.reference": _state("20.0", 1),
+    }
+    hass.states.get.side_effect = states.get
+    manager = _room_manager(hass)
+    manager.get_fresh_room_temperatures()
+
+    assert manager.get_room_temperatures() == [23.5, 20.0]

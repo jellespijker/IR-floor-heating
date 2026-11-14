@@ -9,7 +9,11 @@
           "relays": "Heater switch",
           "room_sensors": "Room temperature sensors",
           "floor_sensors": "Floor temperature sensors",
-          "power_sensors": "Power/Energy sensors"
+          "power_sensors": "Power/Energy sensors",
+          "reference_room_sensor": "Reference room sensor (optional)"
+        },
+        "data_description": {
+          "reference_room_sensor": "A room sensor you trust for the absolute temperature, for example a battery sensor away from heat sources. The other room sensors are then corrected by an offset that is learned against it, so warm-reading mains-powered sensors still supply fast updates. Leave empty to treat all room sensors as equally accurate."
         }
       }
     },
@@ -50,7 +54,8 @@
           "pid_kp": "PID proportional gain (Kp)",
           "pid_ki": "PID integral gain (Ki)",
           "pid_kd": "PID derivative gain (Kd)",
-          "maintain_comfort_limit": "Maintain comfort limit during cooling"
+          "maintain_comfort_limit": "Maintain comfort limit during cooling",
+          "reference_room_sensor": "Reference room sensor (optional)"
         },
         "data_description": {
           "max_floor_temp": "Maximum allowed floor surface temperature (material safety limit). For engineered wood/laminate: 27-28°C",
@@ -65,7 +70,8 @@
           "pid_kp": "Proportional gain: Response to current temperature error. Higher = faster response but may overshoot. Default: 10.0",
           "pid_ki": "Integral gain: Eliminates steady-state error over time. Higher = faster elimination but may cause overshoot. Default: 0.5",
           "pid_kd": "Derivative gain: Dampens rate of change. Higher = less overshoot but may slow response. Default: 2.0",
-          "maintain_comfort_limit": "When enabled, the floor temperature tries to maintain the comfort offset (max_floor_temp_diff) from the target room temperature. This prevents the floor from cooling too fast."
+          "maintain_comfort_limit": "When enabled, the floor temperature tries to maintain the comfort offset (max_floor_temp_diff) from the target room temperature. This prevents the floor from cooling too fast.",
+          "reference_room_sensor": "A room sensor you trust for the absolute temperature, for example a battery sensor away from heat sources. The other room sensors are then corrected by an offset that is learned against it, so warm-reading mains-powered sensors still supply fast updates. Leave empty to treat all room sensors as equally accurate."
         }
       }
     }
@@ -97,6 +103,12 @@
           },
           "safety_veto_active": {
             "name": "Safety veto active"
+          },
+          "reference_room_sensor": {
+            "name": "Reference room sensor"
+          },
+          "room_sensor_offsets": {
+            "name": "Learned room sensor offsets"
           }
         }
       }
