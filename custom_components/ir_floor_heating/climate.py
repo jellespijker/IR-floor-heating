@@ -341,7 +341,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         self._room_temp: float | None = None
         self._floor_temp: float | None = None
         self._temp_lock = asyncio.Lock()
-        self._attr_temperature_unit = config.unit
+        self._attr_native_temperature_unit = config.unit
         self._attr_unique_id = config.unique_id
         self._attr_supported_features = (
             ClimateEntityFeature.TARGET_TEMPERATURE
@@ -472,10 +472,11 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         if self.hass.state is CoreState.running:
             _async_startup()
         else:
-            remove_listener = self.hass.bus.async_listen_once(
-                EVENT_HOMEASSISTANT_START, _async_startup
-            )
-            self.async_on_remove(remove_listener)
+            # A one-time listener removes itself when it fires. Registering
+            # its remover with async_on_remove made a later unload (for
+            # example after changing options) fail with "Unable to remove
+            # unknown job listener".
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_START, _async_startup)
 
         # Restore previous state
         if (old_state := await self.async_get_last_state()) is not None:
@@ -522,7 +523,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         return self.precision
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         """Return the room sensor temperature."""
         return self._room_temp
 
@@ -541,7 +542,7 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
         return HVACAction.HEATING
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         """Return the temperature we try to reach."""
         return self._target_temp
 
@@ -994,3 +995,18 @@ class IRFloorHeatingClimate(ClimateEntity, RestoreEntity):
             {ATTR_ENTITY_ID: self.heater_entity_id},
             context=self._context,
         )
+
+
+# Home Assistant 2026.11 renamed the temperature members of ClimateEntity to
+# native_* and deprecated the old names (removal in 2027.11). Older versions
+# only read the old names, so serve those there.
+if not hasattr(ClimateEntity, "native_current_temperature"):  # pragma: no cover
+    IRFloorHeatingClimate.current_temperature = (  # type: ignore[assignment]
+        IRFloorHeatingClimate.native_current_temperature
+    )
+    IRFloorHeatingClimate.target_temperature = (  # type: ignore[assignment]
+        IRFloorHeatingClimate.native_target_temperature
+    )
+    IRFloorHeatingClimate.temperature_unit = property(  # type: ignore[assignment]
+        lambda self: self._attr_native_temperature_unit
+    )
