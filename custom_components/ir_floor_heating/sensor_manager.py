@@ -31,6 +31,9 @@ class SensorManager:
         self.floor_sensors = floor_sensors
         self.power_sensors = power_sensors
         self.heater_entity_id = heater_entity_id
+        # Report time of the last reading consumed per room sensor, used by
+        # get_fresh_room_temperatures().
+        self._last_consumed: dict[str, object] = {}
 
     def _get_sensor_values(self, entity_ids: list[str]) -> list[float | None]:
         """Gather float values from a list of entity IDs."""
@@ -49,6 +52,40 @@ class SensorManager:
     def get_room_temperatures(self) -> list[float | None]:
         """Get room temperature readings."""
         return self._get_sensor_values(self.room_sensors)
+
+    def get_fresh_room_temperatures(self) -> list[float | None]:
+        """
+        Get room temperature readings that were not handed out before.
+
+        A sensor that has not reported since the previous call yields None, so
+        every reading is used as a measurement exactly once. This matters for
+        bias estimation against a reference sensor: re-feeding the stale value
+        of a slow (battery) reference on every update of a fast sensor would
+        pin the room estimate to that stale value.
+        """
+        values: list[float | None] = []
+        for entity_id in self.room_sensors:
+            state = self.hass.states.get(entity_id)
+            if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                values.append(None)
+                continue
+
+            reported = getattr(state, "last_reported", None) or getattr(
+                state, "last_updated", None
+            )
+            if reported is not None and self._last_consumed.get(entity_id) == reported:
+                values.append(None)
+                continue
+
+            try:
+                value = float(state.state)
+            except ValueError:
+                values.append(None)
+                continue
+
+            self._last_consumed[entity_id] = reported
+            values.append(value)
+        return values
 
     def get_floor_temperatures(self) -> list[float | None]:
         """Get floor temperature readings."""

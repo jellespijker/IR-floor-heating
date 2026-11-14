@@ -17,6 +17,9 @@ import numpy as np
 # Small epsilon for dt comparisons
 DT_EPSILON = 1e-4
 
+# Floor temperature, floor velocity, room temperature, room velocity
+BASE_STATES = 4
+
 
 def _q_discrete_white_noise(dt: float, var: float) -> np.ndarray:
     """
@@ -87,6 +90,19 @@ class KalmanTuning:
     r_var_floor: float = 1.5  # High R to smooth floor jitter
     r_var_room: float = 0.1  # Low R to track accurate room sensors
 
+    # 4. ROOM SENSOR BIAS ESTIMATION (only used with a reference room sensor)
+    # The reference sensor defines the absolute room temperature, so it is
+    # trusted more than the other room sensors.
+    r_var_reference: float = 0.02
+    # Each non-reference room sensor gets an offset state modelled as a random
+    # walk. q_var_bias is its variance growth in degC^2 per second: 7e-5 lets
+    # the offset drift about 0.5 degC per hour (1 sigma), slow compared to the
+    # room itself, so fast changes are attributed to the room, not the offset.
+    q_var_bias: float = 7e-5
+    # Initial offset variance (degC^2). Large, so the first reference reading
+    # settles the offsets almost immediately.
+    p0_bias: float = 25.0
+
 
 class FusionKalmanFilter:
     """MIMO Kalman Filter with damped power response."""
@@ -97,30 +113,59 @@ class FusionKalmanFilter:
         num_room_sensors: int,
         dt: float = 60.0,
         tuning: KalmanTuning | None = None,
+        reference_room_index: int | None = None,
     ) -> None:
-        """Initialize the FusionKalmanFilter."""
+        """
+        Initialize the FusionKalmanFilter.
+
+        Without ``reference_room_index`` every room sensor is treated as an
+        unbiased reading of the room temperature, so the fused value is in
+        effect their average.
+
+        With ``reference_room_index`` that room sensor is taken as the
+        calibrated one, and every other room sensor gets an extra state for
+        its offset against the room temperature: ``z_i = T_room + bias_i``.
+        The offsets are learned whenever the reference reports, and frozen
+        (apart from slow drift) while it is silent, so a fast but biased
+        sensor keeps supplying the dynamics at the reference sensor's level.
+        """
         if tuning is None:
             tuning = KalmanTuning()
+
+        if reference_room_index is not None and not (
+            0 <= reference_room_index < num_room_sensors
+        ):
+            msg = (
+                f"reference_room_index {reference_room_index} is out of range "
+                f"for {num_room_sensors} room sensors"
+            )
+            raise ValueError(msg)
 
         self.dt = dt
         self.num_floor = num_floor_sensors
         self.num_room = num_room_sensors
+        self.reference_room_index = reference_room_index
+
+        # Map room sensor index -> index of its bias state in x (None when the
+        # sensor is the reference, or when bias estimation is off).
+        self._bias_state: list[int | None] = [None] * num_room_sensors
+        if reference_room_index is not None:
+            next_state = BASE_STATES
+            for i in range(num_room_sensors):
+                if i != reference_room_index:
+                    self._bias_state[i] = next_state
+                    next_state += 1
+        self.num_bias = sum(idx is not None for idx in self._bias_state)
+        self.dim_x = BASE_STATES + self.num_bias
 
         # Store tuning
         self.tuning = tuning
 
         self.kf = _LinearKalmanFilter(
-            dim_x=4, dim_z=num_floor_sensors + num_room_sensors
+            dim_x=self.dim_x, dim_z=num_floor_sensors + num_room_sensors
         )
 
-        # State Transition Matrix (F) will be set in _update_matrices with damping
-        # Initialize with damped model
-        damping = 0.95
-        self.kf.F = np.array(
-            [[1, dt, 0, 0], [0, damping, 0, 0], [0, 0, 1, dt], [0, 0, 0, damping]]
-        )
-
-        # Update B and Q matrices
+        # Update F, B and Q matrices (damped model)
         self._update_matrices(dt)
 
         # Measurement Matrix (H)
@@ -129,9 +174,14 @@ class FusionKalmanFilter:
         # Initial Uncertainty: Set high to allow initial convergence,
         # but the filter will tighten up quickly.
         self.kf.P *= 5.0
+        for idx in self._bias_state:
+            if idx is not None:
+                self.kf.P[idx, idx] = tuning.p0_bias
 
-        # Reasonable initial state
-        self.kf.x = np.array([[20.0, 0.0, 20.0, 0.0]]).T
+        # Reasonable initial state (offsets start at zero)
+        self.kf.x = np.zeros((self.dim_x, 1))
+        self.kf.x[0, 0] = 20.0
+        self.kf.x[2, 0] = 20.0
 
     def _update_matrices(self, dt: float) -> None:
         """Update F, B and Q matrices based on current dt and tuning."""
@@ -140,7 +190,8 @@ class FusionKalmanFilter:
         # Without damping, velocity accumulates indefinitely causing runaway
         # temperatures.
         damping = 0.95
-        self.kf.F = np.array(
+        f = np.eye(self.dim_x)  # Bias states are a random walk: identity
+        f[:BASE_STATES, :BASE_STATES] = np.array(
             [
                 [1, dt, 0, 0],  # Floor position influenced by velocity
                 [0, damping, 0, 0],  # Floor velocity with damping (decay)
@@ -148,31 +199,39 @@ class FusionKalmanFilter:
                 [0, 0, 0, damping],  # Room velocity with damping (decay)
             ]
         )
+        self.kf.F = f
 
-        # Control Input Matrix (B)
-        self.kf.B = np.array(
-            [
-                [0.5 * self.tuning.kf_floor_gain * dt**2],
-                [self.tuning.kf_floor_gain * dt],
-                [0.5 * self.tuning.kf_room_gain * dt**2],
-                [self.tuning.kf_room_gain * dt],
-            ]
-        )
+        # Control Input Matrix (B): heater power does not move sensor offsets
+        b = np.zeros((self.dim_x, 1))
+        b[:BASE_STATES, 0] = [
+            0.5 * self.tuning.kf_floor_gain * dt**2,
+            self.tuning.kf_floor_gain * dt,
+            0.5 * self.tuning.kf_room_gain * dt**2,
+            self.tuning.kf_room_gain * dt,
+        ]
+        self.kf.B = b
 
         # Process Noise (Q)
-        q_floor = _q_discrete_white_noise(dt, self.tuning.q_var_floor)
-        q_room = _q_discrete_white_noise(dt, self.tuning.q_var_room)
-        self.kf.Q = np.block([[q_floor, np.zeros((2, 2))], [np.zeros((2, 2)), q_room]])
+        q = np.zeros((self.dim_x, self.dim_x))
+        q[0:2, 0:2] = _q_discrete_white_noise(dt, self.tuning.q_var_floor)
+        q[2:4, 2:4] = _q_discrete_white_noise(dt, self.tuning.q_var_room)
+        for idx in self._bias_state:
+            if idx is not None:
+                q[idx, idx] = self.tuning.q_var_bias * dt
+        self.kf.Q = q
 
     def _update_h_matrix(self, m: int, n: int) -> None:
         """Construct the measurement matrix H dynamically."""
-        h = np.zeros((m + n, 4))
+        h = np.zeros((m + n, self.dim_x))
         # Rows 0 to M-1 map to T_floor (index 0)
         for i in range(m):
             h[i, 0] = 1
-        # Rows M to M+N-1 map to T_room (index 2)
+        # Rows M to M+N-1 map to T_room (index 2), plus the sensor's own offset
         for i in range(n):
             h[m + i, 2] = 1
+            bias_idx = self._bias_state[i]
+            if bias_idx is not None:
+                h[m + i, bias_idx] = 1
         self.kf.H = h
 
     def update(
@@ -185,8 +244,6 @@ class FusionKalmanFilter:
         """Perform prediction and update steps with dynamic sensor gating."""
         if dt is not None and dt > 0 and abs(dt - self.dt) > DT_EPSILON:
             self.dt = dt
-            self.kf.F[0, 1] = dt
-            self.kf.F[2, 3] = dt
             self._update_matrices(dt)
 
         # 1. Prediction Step
@@ -213,15 +270,23 @@ class FusionKalmanFilter:
 
         # 3. Dynamic construction of H and R for this update
         num_valid = len(z)
-        h_v = np.zeros((num_valid, 4))
+        h_v = np.zeros((num_valid, self.dim_x))
         r_diag = []
 
         for i, idx in enumerate(valid_indices):
             if idx < self.num_floor:
                 h_v[i, 0] = 1  # Map to T_floor
                 r_diag.append(self.tuning.r_var_floor)
+                continue
+
+            room_idx = idx - self.num_floor
+            h_v[i, 2] = 1  # Map to T_room
+            bias_idx = self._bias_state[room_idx]
+            if bias_idx is not None:
+                h_v[i, bias_idx] = 1  # ... plus this sensor's offset
+            if room_idx == self.reference_room_index:
+                r_diag.append(self.tuning.r_var_reference)
             else:
-                h_v[i, 2] = 1  # Map to T_room
                 r_diag.append(self.tuning.r_var_room)
 
         r_v = np.diag(r_diag)
@@ -246,3 +311,17 @@ class FusionKalmanFilter:
     def room_temp(self) -> float:
         """Fused room temperature."""
         return float(self.kf.x[2, 0])
+
+    @property
+    def room_biases(self) -> list[float | None]:
+        """
+        Learned offset of each room sensor against the room temperature.
+
+        One entry per room sensor, in configuration order. ``None`` for a
+        sensor without an offset state: the reference sensor itself, or every
+        sensor when no reference is configured.
+        """
+        return [
+            None if idx is None else float(self.kf.x[idx, 0])
+            for idx in self._bias_state
+        ]
