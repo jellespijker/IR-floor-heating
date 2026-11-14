@@ -111,6 +111,19 @@ _LOGGER = logging.getLogger(__name__)
 PARALLEL_UPDATES = 1
 
 
+def _optional_float(value: Any) -> float | None:
+    """
+    Convert an optional config value to float.
+
+    The options form offers precision and target temperature step as a
+    dropdown, which stores the choice as a string ("0.5"). The climate entity
+    has to report them as numbers.
+    """
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
 @dataclass
 class ClimateConfig:
     """Configuration for IR floor heating climate entity."""
@@ -221,8 +234,8 @@ class ClimateConfig:
                 else None
             ),
             initial_hvac_mode=config.get(CONF_INITIAL_HVAC_MODE),
-            precision=config.get(CONF_PRECISION),
-            target_temperature_step=config.get(CONF_TEMP_STEP),
+            precision=_optional_float(config.get(CONF_PRECISION)),
+            target_temperature_step=_optional_float(config.get(CONF_TEMP_STEP)),
             unit=hass.config.units.temperature_unit,
             unique_id=entry.entry_id,
             boost_mode=config.get(CONF_BOOST_MODE, True),
