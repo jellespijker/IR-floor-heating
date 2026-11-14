@@ -262,6 +262,11 @@ A **Fusion Kalman Filter** is used to combine readings from multiple sensors int
     $$x_{k+1} = F x_k + B u_k$$
 4.  **Dynamic Gating**: If a sensor fails or becomes unavailable (returns `None`), the filter dynamically reshapes its measurement matrix ($H$) to exclude that sensor, ensuring the system continues to operate robustly as long as at least one sensor remains.
 
+5.  **Room Sensor Bias Estimation** (optional): Room sensors are otherwise treated as equally accurate, so the fused room temperature is in effect their average. A sensor that reads warm, for example one that heats itself from mains power or sits next to a power supply, then shifts the estimate, and the thermostat stops heating too early. When a `reference_room_sensor` is configured, every other room sensor gets an extra state for its offset against the room temperature:
+    $$z_i = T_{room} + b_i, \qquad z_{ref} = T_{room}$$
+    $$x = [T_{floor}, \dot{T}_{floor}, T_{room}, \dot{T}_{room}, b_1, \dots, b_{M-1}]^T$$
+    The offsets are modelled as a slow random walk. They are learned whenever the reference sensor reports and held in between, so a fast but biased sensor keeps supplying the minute-to-minute changes at the level of the reference sensor. This suits a slow battery sensor as reference next to fast mains-powered sensors. In this mode every sensor report is used as a measurement exactly once, so the last value of a silent reference is not re-applied on each update. If the reference becomes unavailable, the last learned offsets stay in use.
+
 This approach provides superior noise rejection compared to simple averaging and allows the system to "anticipate" temperature changes based on heater activity.
 
 ## Key Features
@@ -302,6 +307,7 @@ This approach provides superior noise rejection compared to simple averaging and
 | `room_sensor` | Primary room temperature sensor (legacy) | Required* |
 | `floor_sensor` | Primary floor temperature sensor (legacy) | Required* |
 | `room_sensors` | List of room sensors for MIMO fusion | `[]` |
+| `reference_room_sensor` | Trusted room sensor; the other room sensors are corrected by an offset learned against it | none |
 | `floor_sensors` | List of floor sensors for MIMO fusion | `[]` |
 | `power_sensors` | List of power sensors for Kalman prediction | `[]` |
 | `max_floor_temp` | Absolute maximum floor temperature (°C) | 28.0 |
@@ -336,6 +342,8 @@ The integration provides several diagnostic sensors to monitor internal state:
 - `sensor.<name>_relay_toggle_count`: Total number of relay switching events (for maintenance tracking).
 - `sensor.<name>_fused_room_temperature`: Kalman-fused room temperature estimate.
 - `sensor.<name>_fused_floor_temperature`: Kalman-fused floor temperature estimate.
+
+With a `reference_room_sensor` configured, the climate entity also exposes the attributes `reference_room_sensor` and `room_sensor_offsets` (the learned offset per room sensor, in °C).
 - `binary_sensor.<name>_safety_veto_active`: Whether safety limits are currently blocking heating.
 - `binary_sensor.<name>_maintain_comfort_limit`: Whether the comfort limit is actively maintained.
 
